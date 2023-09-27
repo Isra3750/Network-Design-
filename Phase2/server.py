@@ -1,12 +1,28 @@
-import socket       #Python socket library
-server_address = socket.gethostbyname(socket.gethostname())  #Gets the host name of the current system
-server_port = 12000         #Server port
-server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)    #Creates UDP socket
-server_socket.bind(("",server_port))        #Binds the socket to the local port number 12000
+import socket
 
-while True:         #Constantly loops
-    message, client_address = server_socket.recvfrom(12000)     #Reads the message from the UDP socket while also getting the client address
-    modifiedMessage = message.decode().upper()      #Modifies the recieved message so it's all uppercase
-    print("Server Echo: " + modifiedMessage)        #Prints out the modified message
-    server_socket.sendto(modifiedMessage.encode(),client_address)   #Sends the modifed message back to the client
-    print(client_address)           #Prints the client address
+# Create a UDP socket
+serverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+# Bind the socket to the server address and port
+serverSocket.bind(('127.0.0.1', 12000)) # use 192.168.1.22 (local ipv4) if there's 2 computer
+
+# Open a file for writing the received image data
+file = open('output.bmp', 'wb')
+
+print('Checking...')
+while True:
+    # Receive data from the client, one packet at a time until END message
+    image_chunk, client_address = serverSocket.recvfrom(1024)
+    
+    # When done, break out loop
+    if image_chunk == b'END_OF_TRANSMISSION':
+        break
+
+    #Write to file
+    file.write(image_chunk)
+
+print("Received from cilent port number " + str(client_address[1])) #confirm recieve
+
+# Close file and server socket
+file.close() 
+serverSocket.close()
