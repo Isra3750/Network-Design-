@@ -3,13 +3,18 @@ import socket
 
 # turn debug_print on/off to reduce time if needed
 debug = True
+
+
 def debug_print(message):
     if debug:
         print(message)
 
+
 class RDT2_2:
-    ACK = 0x00 # 8 bit / 1 byte size
-    def __init__(self, send_address, send_port, recv_address, recv_port, packet_size=1024, corruption=0, option=[1, 2, 3]):
+    ACK = 0x00  # 8 bit / 1 byte size
+
+    def __init__(self, send_address, send_port, recv_address, recv_port, packet_size=1024, corruption=0,
+                 option=[1, 2, 3]):
         # Set the basic connection and configuration parameters
         self.send_address = send_address
         self.recv_address = recv_address
@@ -23,7 +28,7 @@ class RDT2_2:
         # Initialize FSM state and header size
         self._state = 0
         self._prev_state = 1
-        self._header_size = 3 # size in byte
+        self._header_size = 3  # size in byte
 
         # Create sender and receiver sockets
         self.send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -58,7 +63,8 @@ class RDT2_2:
             debug_print(f"RDT2_2 - Sending packet : {packet_ide}/{len(packets) - 1}")
 
             # Send the packet
-            self.send_sock.sendto(self._add_header(packets[packet_ide], self._state), (self.send_address, self.send_port))
+            self.send_sock.sendto(self._add_header(packets[packet_ide], self._state),
+                                  (self.send_address, self.send_port))
 
             if packet_ide == (len(packets) - 1):
                 # Turn off corruption for the last packet in the transmission
@@ -94,7 +100,8 @@ class RDT2_2:
             # validating the checksum
             # checking whether the state of the sending process matches the state of the sending process.
             # The selected option is acted
-            if ((not ((self._corrupted()) and (3 in self.option))) or (1 in self.option)) and self._verify_checksum(packet):
+            if ((not ((self._corrupted()) and (3 in self.option))) or (1 in self.option)) and self._verify_checksum(
+                    packet):
                 if (header == self._state):
                     # Getting number of bytes to receive from the sending process
                     packet_cnt = data
@@ -144,7 +151,7 @@ class RDT2_2:
     def _send_ack(self, state):
         # Inform the user about sending an acknowledgment
         debug_print(f"RDT2_2 - Sending ACK {state}")
-    
+
         # Create an acknowledgment packet with the given state
         ack_packet = self._add_header(self.ACK.to_bytes(1, 'big'), state)
 
@@ -158,12 +165,13 @@ class RDT2_2:
         # Keep receiving packets until a valid ACK or NAK is received
         while received_packet is None:
             received_packet, sender_address = self.recv_sock.recvfrom(1024)
-    
+
         # Parse the received acknowledgment packet
         header, data, checksum = self._parse_packet(received_packet)
 
         # Validate the checksum of the packet and check the state and ACK/NAK status
-        if ((not ((self._corrupted()) and (2 in self.option))) or (1 in self.option)) and self._verify_checksum(received_packet):
+        if ((not ((self._corrupted()) and (2 in self.option))) or (1 in self.option)) and self._verify_checksum(
+                received_packet):
             if header == self._state and int.from_bytes(data, 'big') == self.ACK:
                 # Acknowledgment received successfully
                 debug_print("RDT2_2 - ACK")
@@ -181,17 +189,17 @@ class RDT2_2:
             debug_print("RDT2_2 - Corrupted packet")
             return False, header
 
-   # getting the header messgae
+    # getting the header messgae
     def _add_header(self, packet, state):
         # Create a header with the FSM state
-        header = state.to_bytes(1, byteorder='big')
-    
+        header = state.to_bytes(1, 'big')
+
         # Calculate the checksum for the header and packet
         header_checksum = self._checksum(header + packet)
-    
+
         # Combine the header, packet, and checksum to form the packet with header
         header_packet = header + packet + header_checksum
-    
+
         return header_packet
 
     def _parse_packet(self, packet):
@@ -199,7 +207,7 @@ class RDT2_2:
         header = packet[0]
         data = packet[1:-2]
         checksum = packet[-2:]
-    
+
         return header, data, checksum
 
     def _change_state(self):
@@ -215,46 +223,21 @@ class RDT2_2:
         self._state = 0
 
     # estimating the checksum, from geekfromgeek
-    def _checksum(self, packet):
-        sum_ = 0
-        k = 16
+    def _checksum(self, packet, bits=16):
+            # Calculate the sum of 16-bit words in the packet
+            total = sum(int.from_bytes(packet[i:i + 2], 'big') for i in range(0, len(packet), 2))
 
-        # Dividing the packet into 2 bytes and calculate then sum of a packet
-        for i in range(0, len(packet), 2):
-            sum_ += int.from_bytes(packet[i:i + 2], 'big')
+            # Ensure the sum is within the specified number of bits
+            checksum = total & ((1 << bits) - 1)
 
-        sum_ = bin(sum_)[2:]
-        # convert to binary
+            # Calculate the one's complement (invert the bits)
+            checksum = ((1 << bits) - 1) ^ checksum
 
-        # getting the overflow count
-        while len(sum_) != k:
-            if len(sum_) > k:
-                x = len(sum_) - k
-                sum_ = bin(int(sum_[0:x], 2) + int(sum_[x:], 2))[2:]
-            if len(sum_) < k:
-                sum_ = '0' * (k - len(sum_)) + sum_
-
-        # get the complement
-        checksum = ''
-        for i in sum_:
-            if i == '1':
-                checksum += '0'
-            else:
-                checksum += '1'
-
-        # Converting the 8 bits into 1 byte
-        checksum = bytes(int(checksum[i: i + 8], 2) for i in range(0, len(checksum), 8))
-        return checksum
+            # Convert to bytes
+            return checksum.to_bytes(bits // 8, 'big')
 
     def _verify_checksum(self, packet):
-        packet_data = packet[:-2]
-        packet_cs = packet[-2:]
-        # getting the original checksum.
-        checksum = self._checksum(packet_data)
-        # checking the original checksum.
+        packet_data, packet_cs = packet[:-2], packet[-2:]
+        # Extract packet data and checksum
 
-        # checking for both the values
-        if packet_cs == checksum:
-            return True
-        else:
-            return False
+        return packet_cs == self._checksum(packet_data)
