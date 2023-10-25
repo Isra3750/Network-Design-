@@ -16,7 +16,7 @@ def Make_Packet(input_file):
         return packets
 
 # Set arguement for RDT2_2 class for server side
-rdtclient = RDT2_2("127.0.0.1", 45220, "127.0.0.1", 45200, 1024, corruption=20)
+rdtclient = RDT2_2("127.0.0.1", "127.0.0.1", 45220, 45200, corruption=30)
 
 # Make packet from file named "sample.bmp"
 packets = Make_Packet("sample.bmp")

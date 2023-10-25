@@ -1,7 +1,7 @@
 from rdt2_2 import *
 
 # Set arguement for RDT2_2 class for server side
-rdtserver = RDT2_2("127.0.0.1", 45200, "127.0.0.1", 45220, corruption=30, option=[3])
+rdtserver = RDT2_2("127.0.0.1", "127.0.0.1", 45200, 45220, corruption=30, option=[3])
 
 print("Reciever - RDT2-2")
 
