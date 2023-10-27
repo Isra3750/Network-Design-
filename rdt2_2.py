@@ -17,8 +17,8 @@ class RDTclass:
         self.send_port, self.recv_port = send_port, recv_port
         self.corruption_rate, self.option = corruption_rate, option
 
-        # Initialize FSM state and header size
-        self.Current_state, self.Prev_state = 0, 1,
+        # Initialize FSM state
+        self.Current_state, self.Prev_state = 0, 1
 
         # Create sender and receiver sockets
         self.send_sock = socket(AF_INET, SOCK_DGRAM)
