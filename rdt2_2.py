@@ -2,7 +2,7 @@ from socket import * # socket libary for server and client binding
 from random import * # import randrange for corruption methods
 
 # On / Off print statement, save time if off
-debug = True
+debug = False
 def debug_print(message):
     if debug:
         print(message)
@@ -12,7 +12,7 @@ class RDTclass:
     packet_size = 1024 # packet size of 1024 byte as default
 
     def __init__(self, send_address, recv_address, send_port, recv_port, corruption_rate=0, option=[1,2,3]):
-        # Initialize the connection and configuration parameters
+        # Initialize the connection and set parameters
         self.send_address, self.recv_address = send_address, recv_address
         self.send_port, self.recv_port = send_port, recv_port
         self.corruption_rate, self.option = corruption_rate, option
@@ -26,7 +26,7 @@ class RDTclass:
         self.recv_sock.bind((self.recv_address, self.recv_port))
 
     def send(self, packets):
-        # Inform the user about the total number of packets to be sent
+        # Print total amount of packet
         debug_print("RDT-class sender MSG: Amount of packet to be sent = " + str(len(packets)))
 
         # Create a header with the number of packets to be transmitted and send it
@@ -35,7 +35,7 @@ class RDTclass:
 
         # Handshake, for the packet len
         while True:
-            # Wait for acknowledgment and its associated state
+            # Wait for ACK and its associated state
             ack, state = self.ACK_recv()
             if ack and state == self.Current_state:
                 self.state_change()
@@ -44,7 +44,7 @@ class RDTclass:
 
         packet_number = 0
         while packet_number < len(packets):
-            # Inform the user about the packet being sent
+            # Print total recieved packet amount
             debug_print(f"RDT-class sender counting MSG: Sending packet number = " + str(packet_number) + " / " + str(len(packets) - 1))
 
             # Send the packet
@@ -72,7 +72,7 @@ class RDTclass:
             SeqNum, data, checksum = self.split_packet(packet)
             data, checksum = int.from_bytes(data, 'big'), int.from_bytes(checksum, 'big') # Get int from bytes
 
-            # Validate the packet and perform actions based on options
+            # Validate the packet and perform else if based on options
             if self.is_Corrupted(packet):
                 if SeqNum == self.Current_state:
                     # Get packet amount
@@ -103,7 +103,7 @@ class RDTclass:
             SeqNum, data, checksum = self.split_packet(packet)
             checksum = int.from_bytes(checksum, 'big') # unpack checksum to int, no need for data since data is appended to packet_data
 
-            # Validate the packet and perform actions based on options
+            # Validate the packet and perform else if based on options
             if self.is_Corrupted(packet):
                 if SeqNum == self.Current_state:
                     # If there's no problem with packet, print current num, append, and shift to next packet
@@ -142,7 +142,7 @@ class RDTclass:
             received_packet, sender_address = self.recv_sock.recvfrom(1024)
         SeqNum, data, checksum = self.split_packet(received_packet) # Split packet for ACK, seqNum, data (0x00), cs
 
-        # Validate the acknowledgment packet and perform actions based on options
+        # Validate the ACK packet and else if based on options
         if self.test_checksum(received_packet) and ((not ((self.corruption_test()) and (2 in self.option))) or (1 in self.option)):
             if SeqNum == self.Current_state and int.from_bytes(data, 'big') == self.ACK:
                 debug_print("RDT-class ACK recv MSG: Recieved ACK" + str(SeqNum) + "\n")
@@ -213,6 +213,6 @@ class RDTclass:
         return packet_checksum == self.create_checksum(packet_data)
 
 ## Some section of this code has been paraphase from some sites, such as:
-## github.com/shihrer/csci466.project2/blob/master/RDT.py (debug_log)
-## github.com/CantOkan/BIL441_Computer_Networks/blob/master/RDT_Protocols/RDT2. (randint)
-## Network 5830 main (conditionals)
+## github.com/shihrer/csci466.project2/blob/master/RDT.py (debug_log function)
+## github.com/CantOkan/BIL441_Computer_Networks/blob/master/RDT_Protocols/RDT2. (randint for corruption)
+## Network 4830 main - phase 3 (conditionals)
