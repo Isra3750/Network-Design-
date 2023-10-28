@@ -38,6 +38,7 @@ class RDTclass:
             # Wait for ACK and its associated state
             ack, state = self.ACK_recv()
             if ack and state == self.Current_state:
+                debug_print("RDT-class sender counting MSG: Starting loop")
                 self.state_change()
                 break
             debug_print("RDT-class sender handshake MSG: Wrong current state, resending")
