@@ -1,8 +1,11 @@
 from RDTclass import *
 import time
 
-# Set arguement for RDT2_2 class for server side
-rdtserver = RDTclass("127.0.0.1", "127.0.0.1", 45200, 45220, corruption_rate=15, option=[1])
+# Set arguement for RDT2_2 class for server side, from instruction note (Phase 3.pdf):
+# 1. Option 1 - No loss/bit-errors
+# 2. Option 2 - ACK packet bit-error
+# 3. Option 3 - Data packet bit-error
+rdtserver = RDTclass("127.0.0.1", "127.0.0.1", 12000, 12002, corruption_rate = 15, option = [1])
 
 print("Server - RDT2-2")
 

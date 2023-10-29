@@ -11,14 +11,14 @@ class RDTclass:
     ACK = 0x00  # 8-bit ACK value, hexadecimal
     packet_size = 1024 # packet size of 1024 byte as default
 
-    def __init__(self, send_address, recv_address, send_port, recv_port, corruption_rate=0, option=[1,2,3]):
+    def __init__(self, send_address, recv_address, send_port, recv_port, corruption_rate, option=[1, 2, 3]):
         # Initialize the connection and set parameters
         self.send_address, self.recv_address = send_address, recv_address
         self.send_port, self.recv_port = send_port, recv_port
         self.corruption_rate, self.option = corruption_rate, option
 
         # Initialize FSM state
-        self.Current_state, self.Prev_state = 0, 1
+        self.Cur_state, self.Prev_state = 0, 1
 
         # Create sender and receiver sockets
         self.send_sock = socket(AF_INET, SOCK_DGRAM)
@@ -27,36 +27,36 @@ class RDTclass:
 
     def send(self, packets):
         # Print total amount of packet
-        debug_print("RDT-class sender MSG: Amount of packet to be sent = " + str(len(packets)))
+        debug_print("RDT-class sender MSG: Amount of packet to be sent = " + str(len(packets)) + " packets")
 
         # Create a header with the number of packets to be sent
         packet_count = len(packets).to_bytes(1024, 'big')
-        self.send_sock.sendto(self.create_header(packet_count, self.Current_state), (self.send_address, self.send_port))
+        self.send_sock.sendto(self.create_header(packet_count, self.Cur_state), (self.send_address, self.send_port))
 
         # Handshake, for the packet len
         while True:
             # Wait for ACK and its associated state
             ack, state = self.ACK_recv()
-            if ack and state == self.Current_state:
+            if ack and state == self.Cur_state:
                 debug_print("RDT-class sender counting MSG: Starting loop")
                 self.state_change()
                 break
-            debug_print("RDT-class sender handshake MSG: Wrong current state, resending")
+            debug_print("RDT-class sender handshake MSG: Handshake Resending...")
 
         packet_number = 0
         while packet_number < len(packets):
-            # Print total recieved packet amount
-            debug_print(f"RDT-class sender counting MSG: Sending packet number = " + str(packet_number) + " / " + str(len(packets) - 1))
+            # Print total recieved packet amount, noted that packet number is plus one to simplify output log, although actual packet num has no plus one
+            debug_print(f"RDT-class sender counting MSG: Sending packet number = " + str(packet_number + 1) + " / " + str(len(packets)))
 
             # Send the packet
-            self.send_sock.sendto(self.create_header(packets[packet_number], self.Current_state), (self.send_address, self.send_port))
+            self.send_sock.sendto(self.create_header(packets[packet_number], self.Cur_state), (self.send_address, self.send_port))
 
             ack, state = self.ACK_recv()
-            if ack and state == self.Current_state:
+            if ack and state == self.Cur_state:
                 self.state_change()
                 packet_number += 1
             else:
-                debug_print("RDT-class sender counting MSG: Wrong current state, resending")
+                debug_print("RDT-class sender counting MSG: Resending...")
         # Reset state after all packet has been sent for next trail
         debug_print("RDT class MSG: Resetting state, ready to restart!")
         self.state_reset()
@@ -75,30 +75,32 @@ class RDTclass:
             
 
             # Validate the packet and perform else if based on options (#2)
-            if (self.is_Corrupted(packet)):
-                if (SeqNum == self.Current_state):
+            if not (self.is_Corrupted(packet)):
+                # If packet is corrupted, resend ACK with different state
+                debug_print("RDT-class recv counting MSG: Received corrupted data packet")
+                self.ACK_send(self.Prev_state)
+            else:
+                # If packet is not corrupted, check state
+                if (SeqNum == self.Cur_state):
                     # Get packet amount
                     packet_count = data
-                    debug_print("RDT-class recv counting MSG: Received packet amount is " + str(packet_count))
+                    debug_print("RDT-class recv counting MSG: Received packet amount is " + str(packet_count) + " packets")
 
                     # Send ACK with current state before switching state
-                    self.ACK_send(self.Current_state)
+                    self.ACK_send(self.Cur_state)
                     self.state_change()
 
                     # Once validation is completed, break out of loop
                     break
-                elif (SeqNum != self.Current_state):
-                    # If state is wrong, switch state
+
+                elif (SeqNum != self.Cur_state):
+                    # If state is wrong, resend ACK with different state
                     debug_print("RDT-class recv counting MSG: Received packet with wrong state")
                     self.ACK_send(self.Prev_state)
-            else:
-                # Corrupted data, switch state
-                debug_print("RDT-class recv counting MSG: Received corrupted data packet")
-                self.ACK_send(self.Prev_state)
         
         packet_number = 0
         while packet_number < packet_count:
-            debug_print("RDT-class recv counting MSG: Receiving packet number - " + str(packet_number) + " of " + str(packet_count - 1))
+            debug_print("RDT-class recv counting MSG: Receiving packet number - " + str(packet_number + 1) + " of " + str(packet_count))
 
             # Unpack all packets -> SeqNum, data, cs
             packet, address = self.recv_sock.recvfrom(self.packet_size + 3) # 3 extra bytes for the header
@@ -106,24 +108,25 @@ class RDTclass:
             checksum = int.from_bytes(checksum, 'big') # unpack checksum to int, no need for data since data is appended to packet_data
 
             # Validate the packet and perform else if based on options (#3)
-            if (self.is_Corrupted(packet)):
-                if (SeqNum == self.Current_state):
+            if not (self.is_Corrupted(packet)):
+                # If packet is corrupted, resend ACK with different state
+                debug_print("RDT-class recv counting MSG: Received corrupted data packet")
+                self.ACK_send(self.Prev_state)
+            else:
+                if (SeqNum == self.Cur_state):
                     # If there's no problem with packet, print current num, append, and shift to next packet
-                    debug_print("RDT-class recv counting MSG: Received packet number - " + str(packet_number))
+                    debug_print("RDT-class recv counting MSG: Received packet number - " + str(packet_number + 1))
                     packet_data.append(data) 
                     packet_number += 1
 
                     # Send ACK with current state before switching state
-                    self.ACK_send(self.Current_state)
+                    self.ACK_send(self.Cur_state)
                     self.state_change()
-                elif (SeqNum != self.Current_state):
-                    # If state is wrong, switch state
+
+                elif (SeqNum != self.Cur_state):
+                    # If state is wrong, resend ACK with different state
                     debug_print("RDT-class recv counting MSG: Received packet with wrong state")
                     self.ACK_send(self.Prev_state)
-            else:
-                # Corrupted data, switch state
-                debug_print("RDT-class recv counting MSG: Received corrupted data packet")
-                self.ACK_send(self.Prev_state)
 
         debug_print("RDT class MSG: Resetting state, ready to restart!")
         self.state_reset()
@@ -141,16 +144,18 @@ class RDTclass:
         SeqNum, data, checksum = self.split_packet(received_packet) # Split packet for ACK, seqNum, data (0x00), cs
 
         # Validate the ACK packet and else if based on options (#4)
-        if (self.is_ACK_Corrupted(received_packet)):
-            if (SeqNum == self.Current_state) and (int.from_bytes(data, 'big') == self.ACK):
-                debug_print("RDT-class ACK recv MSG: Recieved ACK" + str(SeqNum) + "\n")
-                return True, SeqNum
-            elif (SeqNum != self.Current_state) and (int.from_bytes(data, 'big') == self.ACK):
-                debug_print("RDT-class ACK recv MSG: Recieved ACK with wrong state")
-                return True, SeqNum
-        else:
+        if not (self.is_ACK_Corrupted(received_packet)):
+            # If ACK is corrupted return False with State
             debug_print("RDT-class ACK recv MSG: Corrupted ACK Packet")
             return False, SeqNum
+        else:
+            # If ACK is not corrupted return True with State
+            if (SeqNum == self.Cur_state) and (int.from_bytes(data, 'big') == self.ACK):
+                debug_print("RDT-class ACK recv MSG: Recieved ACK" + str(SeqNum) + "\n")
+                return True, SeqNum
+            elif (SeqNum != self.Cur_state) and (int.from_bytes(data, 'big') == self.ACK):
+                debug_print("RDT-class ACK recv MSG: Recieved ACK with wrong state")
+                return True, SeqNum
     
     def is_Corrupted(self, packet):
         # Conditional check for corruption and option selected
@@ -198,11 +203,11 @@ class RDTclass:
     
     def state_change(self):
         # Toggle the FSM state between 0 and 1
-        self.Prev_state, self.Current_state = self.Current_state, self.Prev_state
+        self.Prev_state, self.Cur_state = self.Cur_state, self.Prev_state
 
     def state_reset(self):
         # Reset State
-        self.Current_state = 0
+        self.Cur_state = 0
 
     def create_checksum(self, packet, bits=16):
         # Calculate the checksum for the packet, create 16-bit values

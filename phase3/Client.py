@@ -16,8 +16,11 @@ def Make_Packet(input_file):
         # return from function list with image chunks
         return packets
 
-# Set arguement for RDT2_2 class for server side
-rdtclient = RDTclass("127.0.0.1", "127.0.0.1", 45220, 45200, corruption_rate=15, option=[1])
+# Set arguement for RDT2_2 class for server side, from instruction note (Phase 3.pdf):
+# 1. Option 1 - No loss/bit-errors
+# 2. Option 2 - ACK packet bit-error
+# 3. Option 3 - Data packet bit-error
+rdtclient = RDTclass("127.0.0.1", "127.0.0.1", 12002, 12000, corruption_rate = 15, option= [1])
 
 # Make packet from file named "sample.bmp"
 packets = Make_Packet("sample.bmp")
@@ -32,6 +35,6 @@ rdtclient.send(packets)
 stop_time = time.time() # find stop time
 elapsed_time = stop_time - start_time
 
-print("\nTime taken: " + str(elapsed_time))
+print("\nTime taken: " + str(elapsed_time) + " sec")
 
 print("Completed!")
