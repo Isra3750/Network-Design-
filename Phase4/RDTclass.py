@@ -63,6 +63,10 @@ class RDTclass:
                     debug_print("RDT-class sender counting MSG: Data Packet loss!")
                     self.start_time = time() # start timer
                     flag = False # set to False to indicate packet loss
+                if ((self.is_packet_loss()) and (4 in self.option)): # ACK packet loss
+                    debug_print("RDT-class sender counting MSG: ACK Packet loss!")
+                    self.start_time = time() # start timer
+                    flag = False # set to False to indicate packet loss
                 else:
                     self.send_sock.sendto(self.create_header(packets[packet_number], self.Cur_state), (self.send_address, self.send_port))
                     self.start_time = time() # start timer
