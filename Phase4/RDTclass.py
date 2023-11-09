@@ -1,4 +1,4 @@
-# RDTclass - phase 4 - network 4830, phase 4 change client (send and recv_ACK) side only
+# RDTclass - phase 4 - network 4830
 
 from socket import * # socket libary for server and client binding
 from random import * # import randrange for corruption methods
@@ -11,14 +11,14 @@ def debug_print(message):
         print(message)
 
 class RDTclass:
-    def __init__(self, send_address, recv_address, send_port, recv_port, corruption_rate, option=[1, 2, 3, 4, 5]):
+    def __init__(self, send_address, recv_address, send_port, recv_port, corruption_rate, loss_rate, option=[1, 2, 3, 4, 5]):
         self.ACK = 0x00 # 8-bit ACK value, hexadecimal
         self.packet_size = 1024 # packet size of 1024 byte as default
 
         # Initialize the connection and set parameters
         self.send_address, self.recv_address = send_address, recv_address
         self.send_port, self.recv_port = send_port, recv_port
-        self.corruption_rate, self.option = corruption_rate, option
+        self.corruption_rate, self.loss_rate, self.option = corruption_rate, loss_rate, option
 
         # timer function
         self.start_time = 0
@@ -51,20 +51,17 @@ class RDTclass:
             debug_print("RDT-class sender handshake MSG: Handshake Resending...")
 
         packet_number = 0
-        flag = True # Packet loss indication, True = No packet loss currently, False = Packet loss process
+        seconds = 0 # use this to limit print amount for the ellasped time
+        flag = True # Packet loss indication, True = No packet loss currently, False = Packet loss, start countdown
         while packet_number < len(packets):
             # Print total recieved packet amount, noted that packet number is plus one to simplify output log, although actual packet num has no plus one
             if flag:
                 debug_print(f"RDT-class sender counting MSG: Sending packet number = " + str(packet_number + 1) + " / " + str(len(packets)))
 
             # Send the packet
-            if flag == True:
-                if ((self.is_packet_loss()) and (5 in self.option)): # databit packet loss
+            if flag:
+                if ((self.is_packet_loss()) and (5 in self.option)): # databit packet loss, simulate not recieving data packet
                     debug_print("RDT-class sender counting MSG: Data Packet loss!")
-                    self.start_time = time() # start timer
-                    flag = False # set to False to indicate packet loss
-                elif ((self.is_packet_loss()) and (4 in self.option)): # ACK packet loss
-                    debug_print("RDT-class sender counting MSG: ACK Packet loss!")
                     self.start_time = time() # start timer
                     flag = False # set to False to indicate packet loss
                 else:
@@ -74,20 +71,28 @@ class RDTclass:
             # Stop timer
             self.end_time = time()
             if flag == False:
-                debug_print("RDT-class sender counting MSG: Elasped Time - " + (str((self.end_time - self.start_time) * 1000)) + " ms")
+                # Print out, for debug
+                if (((self.end_time - self.start_time) * 1000) > seconds):
+                    debug_print("RDT-class sender counting MSG: Elasped Time - " + (str(round(((self.end_time - self.start_time) * 1000), 2))) + " ms")
+                    seconds += 1
 
-            # resend packet if above 5 ms
-            if (((self.end_time - self.start_time) * 1000) > 5):
+            # resend packet if above 15 ms
+            if (((self.end_time - self.start_time) * 1000) > 15):
                 debug_print("RDT-class sender counting MSG: Timeout - resending current packet\n")
                 self.send_sock.sendto(self.create_header(packets[packet_number], self.Cur_state), (self.send_address, self.send_port)) # Resend current packet
                 flag = True
             
             if flag:
                 ack, state = self.ACK_recv()
+                if ((self.is_packet_loss()) and (4 in self.option)): # ACK packet loss, simulate not recieving ACK
+                    debug_print("RDT-class sender counting MSG: ACK Packet loss!")
+                    self.start_time = time() # start timer
+                    flag = False
 
             if ack and state == self.Cur_state: # change current state if ACK is correct
                 self.state_change()
                 packet_number += 1
+                seconds = 0 
             else: # else loop
                 if flag:
                     debug_print("RDT-class sender counting MSG: Resending...")
@@ -222,7 +227,7 @@ class RDTclass:
 
     def is_packet_loss(self):
         # Return chance that packet is loss during transmission, True if loss, False if not loss
-        return self.corruption_rate >= randrange(1, 101)
+        return self.loss_rate >= randrange(1, 101)
 
     def corrupt_packet(self, packet, corruption_rate):
         # Generate a random number between 1 and 100 to create a chance if corruption should happen or not.
@@ -268,5 +273,3 @@ class RDTclass:
 ## Useful Resources
 ## github.com/shihrer/csci466.project2/blob/master/RDT.py (debug_log function) (#1)
 ## github.com/CantOkan/BIL441_Computer_Networks/blob/master/RDT_Protocols/RDT2. (randint for corruption)
-
-## Networks 5830 main - phase 3 - RDT class - (#2, #3, #4, #5 and method layout)
