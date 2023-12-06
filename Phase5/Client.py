@@ -22,7 +22,7 @@ def Make_Packet(input_file):
 # 3. Option 3 - Data packet bit-error
 # 4. Option 4 - ACK packet loss
 # 5. Option 5 - Data packet loss
-client_side = RDTclass("127.0.0.1", "127.0.0.1", 12002, 12000, corruption_rate = 15, loss_rate = 25, option = [4])
+client_side = RDTclass("127.0.0.1", 12002, "127.0.0.1", 12000, window_size=20, timeout=0.5, corruption_rate=2, loss_rate = 10, option=[3])
 
 # Make packet from file named "sample.bmp"
 packets = Make_Packet("sample.bmp")

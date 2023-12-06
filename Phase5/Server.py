@@ -7,7 +7,7 @@ import time
 # 3. Option 3 - Data packet bit-error
 # 4. Option 4 - ACK packet loss
 # 5. Option 5 - Data packet loss
-server_side = RDTclass("127.0.0.1", "127.0.0.1", 12000, 12002, corruption_rate = 15, loss_rate = 25, option = [4])
+server_side = RDTclass("127.0.0.1", 12000, "127.0.0.1", 12002, window_size=20, timeout=0.5, corruption_rate=2, loss_rate=10, option=[3])
 
 print("Server - RDT2-2")
 
