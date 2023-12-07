@@ -12,7 +12,7 @@ def debug_print(message):
         print(message)
 
 class RDTclass:
-    ACK = 0x00
+    ACK = 0x00 # 8-bit ACK value, hexadecimal
 
     def __init__(self, send_address, send_port, recv_address, recv_port, window_size, corruption_rate, loss_rate, option=[1, 2, 3, 4, 5], timeout=None):
         # Initialize the connection and set parameters
@@ -25,14 +25,14 @@ class RDTclass:
         self.option = option
 
         # Parameters for corruption/loss rate, timeout value
-        self.corruption = corruption_rate
-        self.loss = loss_rate
+        self.corruption_rate = corruption_rate
+        self.loss_rate = loss_rate
         self.timeout = timeout
 
         # Go Back In parameters
         self.base = 0 # base value
         self.window_size = window_size # sliding window size
-        self._seqnum = 0
+        self.seqnum = 0
 
         # sequence number is initialized
         self._ack_pending_timers = []
@@ -40,11 +40,6 @@ class RDTclass:
         for i in range(self.window_size):
             self._ack_pending_buffer.append(i)
 
-        # Create sender and receiver sockets
-        self.send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.recv_sock.bind((self.recv_address, self.recv_port))
-        
         # Threads and Locks
         self._base_l        = threading.Lock()
         self._send_l        = threading.Lock()
@@ -52,6 +47,11 @@ class RDTclass:
 
         # Flags
         self._send_complete_f = False
+
+        # Create sender and receiver sockets
+        self.send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.recv_sock.bind((self.recv_address, self.recv_port))
 
     def send(self, data):
         # Getting the number of packets to be transmitted and let the receiver know and informing the receiver side the value
@@ -79,12 +79,12 @@ class RDTclass:
         # This loop is introduced to find the number of that are remaining for transmittion
         while self.base < total_packets:
             packet, address         = self.recv_sock.recvfrom(2048)
-            header, packet_cnt, rcvd_data, cs  = self._parse_packet(packet)
+            header, packet_cnt, rcvd_data, cs  = self.split_packet(packet)
             header                  = int.from_bytes(header, 'big')         # Sequence number.
             cs                      = int.from_bytes(cs, 'big')             # Packet checksum.
 
             # Verify the integrity of the received packet.
-            if self.verify_checksum(packet) and ((not ((self.packet_corrupted(self.corruption)) and (3 in self.option))) or (1 in self.option)):
+            if self.test_checksum(packet) and ((not ((self.packet_corrupted(self.corruption_rate)) and (3 in self.option))) or (1 in self.option)):
                 total_packets = int.from_bytes(packet_cnt, 'big')  # Total number of packets in the transfer.
 
                 # When the data packet's sequence number is equal to the base number, buffer the data,
@@ -131,12 +131,12 @@ class RDTclass:
             # packet of the sending window has been properly ACK'd, the sequence will add a new packet to the 
             # sending window.
             while self.seqnum < window_end:
-                packet = self._add_header(data[self.seqnum], self.seqnum, len(data))
+                packet = self.create_header(data[self.seqnum], self.seqnum, len(data))
 
                 debug_print(f"GBN: Sending Packet {self.seqnum}/{len(data) - 1}")
 
                 # Send the packet to the receiving host.
-                if (self.packet_lost(self.loss) and (4 in self.option)):
+                if (self.packet_lost(self.loss_rate) and (4 in self.option)):
                     pass
                 else:
                     self._send_l.acquire()
@@ -185,7 +185,7 @@ class RDTclass:
                 else:
                     continue
 
-            header, packet_cnt, rcvd_data, cs  = self._parse_packet(packet)
+            header, packet_cnt, rcvd_data, cs  = self.split_packet(packet)
             header                  = int.from_bytes(header, 'big')     # Sequence number.
             total_packets           = int.from_bytes(packet_cnt, 'big')
             rcvd_data               = int.from_bytes(rcvd_data, 'big')  # Packet data.
@@ -193,7 +193,7 @@ class RDTclass:
             
             # If the checkusm is invalid for the received packet, discard the received packet
             # and wait to receive more ACKs from the receiving host.
-            if (not self.verify_checksum(packet)) or (self.packet_corrupted(self.corruption) and (2 in self.option) and (not 1 in self.option)) and (header != total_packets):
+            if (not self.test_checksum(packet)) or (self.packet_corrupted(self.corruption_rate) and (2 in self.option) and (not 1 in self.option)) and (header != total_packets):
                 debug_print(f"GBN: Checksum invalid.")
                 continue
             else:
@@ -223,7 +223,7 @@ class RDTclass:
             
         return
 
-# this method is initialized to obtain the time-out value
+    # this method is initialized to obtain the time-out value
     def _timeout(self, seqnum, retry):
         # Increment the retry count, and exiting on the 100th retry.
         retry_cnt = retry + 1
@@ -254,81 +254,49 @@ class RDTclass:
         # Introduce simulated packet loss. In the event of packet loss, skip the ACK/NAK response process.
         debug_print(f"GBN: Sending ACK{state}/{total_packets}")
 
-        if (self.packet_lost(self.loss) and (5 in self.option)) and (state != total_packets):
+        if (self.packet_lost(self.loss_rate) and (5 in self.option)) and (state != total_packets):
             return
 
-        packet = self._add_header(self.ACK.to_bytes(1, 'big'), state, total_packets)
+        packet = self.create_header(self.ACK.to_bytes(1, 'big'), state, total_packets)
         self.send_sock.sendto(packet, (self.send_address, self.send_port))
         return
-##
-    # Adding the header and checksum value to each package
-    def _add_header(self, packet, state, transfer_size):        
-        header   = state.to_bytes(4, byteorder='big')
-        header   = header + transfer_size.to_bytes(4, byteorder='big')
-        # total number of packets in the transfer
-        cs       = self.checksum(header + packet)
-        # checksum calculation
 
-        return header + packet + cs
+    def create_header(self, packet, Cur_num, total):
+        # Create SeqNum, total_size, and checksum to each package
+        SeqNum = Cur_num.to_bytes(4, 'big')
+        total_count = total.to_bytes(4, 'big')
+        cs = self.create_checksum(SeqNum + total_count + packet) # create checksum
 
-##
-    # Combining all the received packets
-    def _parse_packet(self, packet):
-        header          = packet[0:4]                  # Extract the header bytes.
-        total_packets   = packet[4:8]                  # Extract the total number of packets in the transfer.
-        data            = packet[8:(len(packet) - 2)]  # Extract the packet application data.
-        cs              = packet[-2:]                  # Extract the packet checksum bytes.
-        return header, total_packets, data, cs
+        return SeqNum + total_count + packet + cs
 
-    # corruption range is estimated with the option selected
+    def split_packet(self, packet):
+        # Split packets into 4 sections, SeqNum, Total_count, data, checksum
+        SeqNum = packet[0:4]
+        total_count = packet[4:8]
+        data = packet[8:-2]
+        cs = packet[-2:]
+        return SeqNum, total_count, data, cs
+
     def packet_corrupted(self, percentage):
-        if percentage >= randrange(1, 101):
-            return True
-        else:
-            return False
-    # packet loss is estimated with the option selected
+        # Return chance that packet is corrupted, True if corrupted, False if not corrupted
+        return self.corruption_rate >= randrange(1, 101)
+
     def packet_lost(self, percentage):
-        if percentage >= randrange(1, 101):
-            return True
-        else:
-            return False
+        # Return chance that packet is loss during transmission, True if loss, False if not loss
+        return self.loss_rate >= randrange(1, 101)
 
-    def checksum(self, packet):
-        sum_    = 0
-        cs_size = 16
+    def create_checksum(self, packet, bits=16):
+        # Calculate the checksum for the packet, create 16-bit values
+        total = sum(int.from_bytes(packet[i:i + 2], 'big') for i in range(0, len(packet), 2))
 
-        # Dividing the packet into 2 bytes and calculate then sum of a packet
-        for i in range(0, len(packet), 2):
-            sum_ += int.from_bytes(packet[i:i + 2], 'big')
-        sum_ = bin(sum_)[2:]  # Change to binary
-        while len(sum_) != cs_size:
-            # convert to binary
-            # getting the overflow coun
-            if len(sum_) > cs_size:
-                x = len(sum_) - cs_size
-                sum_ = bin(int(sum_[0:x], 2) + int(sum_[x:], 2))[2:]
-            if len(sum_) < cs_size:
-                sum_ = '0' * (cs_size - len(sum_)) + sum_
-        # get the compliment
-        checksum = ''
-        for i in sum_:
-            if i == '1':
-                checksum += '0'
-            else:
-                checksum += '1'
-        # converting the 8 bit into 1 byte
-        checksum = bytes(int(checksum[i: i + 8], 2) for i in range(0, len(checksum), 8))
-        return checksum
+        # Apply bitwise AND operation, then invert with XOR operation
+        checksum = (total & ((1 << bits) - 1))
+        checksum = ((1 << bits) - 1) ^ checksum
 
-    def verify_checksum(self, packet):
-        packet_data = packet[:-2]
-        packet_cs   = packet[-2:]
-        # getting the original checksum
-        # re-estimating the checksum to match with the original checksum
-        cs          = self.checksum(packet_data)
+        # Convert bit to byte and return
+        return checksum.to_bytes(bits // 8, 'big')
 
-        # verifying the two vales obtained from the checksum and returning the value
-        if packet_cs == cs:
-            return True
-        else:
-            return False
+    def test_checksum(self, packet):
+        # Split data then return True/False base on checksum similarity
+        packet_data, packet_checksum = packet[:-2], packet[-2:]
+        return packet_checksum == self.create_checksum(packet_data) # make sure both checksum are same then return true else false
