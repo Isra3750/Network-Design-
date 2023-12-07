@@ -1,5 +1,4 @@
 # RDTclass - phase 5 - network 4830
-# imports the python socket library that allows for socket programming
 import socket
 import threading
 from time import time
@@ -34,13 +33,18 @@ class RDTclass:
         self.window_size = window_size # sliding window size
         self.seqnum = 0
 
-        # sequence number is initialized
+        # This list is used to keep track of timer objects associated with each packet's acknowledgment. 
+        # Each element in this list corresponds to a packet's sequence number, and the timer associated with that sequence number. 
         self._ack_pending_timers = []
+
+        # This list is used to keep track of the sequence numbers of packets that are waiting for acknowledgment. 
+        # It is essentially a buffer containing the sequence numbers of the packets that have been sent and are awaiting acknowledgment. 
+        # The size of this buffer is determined by the window size 
         self._ack_pending_buffer = []
         for i in range(self.window_size):
             self._ack_pending_buffer.append(i)
 
-        # Threads and Locks
+        # Threads and Locks to synchronize access to shared resources amoung different threads
         self._base_l        = threading.Lock()
         self._send_l        = threading.Lock()
         self._ack_pending_l = threading.Lock()
@@ -52,67 +56,18 @@ class RDTclass:
         self.send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.recv_sock.bind((self.recv_address, self.recv_port))
-
+    
+    # Send packets from client side
     def send(self, data):
         # Getting the number of packets to be transmitted and let the receiver know and informing the receiver side the value
         self._send_complete_f = False
 
-        # Two threads, one for send, one for recieving ACK
-        send_t      = threading.Thread(target=self._send, args=(data,))
-        recv_ack_t  = threading.Thread(target=self._recv_ack)
-
+        # Create thread for recieving ACK
         debug_print(f"GBN: Starting ACK Receiving Process.")
+        recv_ack_t  = threading.Thread(target=self._recv_ack)
         recv_ack_t.start()
 
-        debug_print(f"GBN: Starting Sending Process.")
-        send_t.start()
-
-        # Close threads when done
-        send_t.join()
-        recv_ack_t.join()
-
-    def recv(self):
-        # Receive the number of bytes of data to be added
-        data_buffer     = []
-        total_packets   = 0xFFFF_FFFF
-        
-        # This loop is introduced to find the number of that are remaining for transmittion
-        while self.base < total_packets:
-            packet, address         = self.recv_sock.recvfrom(2048)
-            header, packet_cnt, rcvd_data, cs  = self.split_packet(packet)
-            header                  = int.from_bytes(header, 'big')         # Sequence number.
-            cs                      = int.from_bytes(cs, 'big')             # Packet checksum.
-
-            # Verify the integrity of the received packet.
-            if self.test_checksum(packet) and ((not ((self.packet_corrupted(self.corruption_rate)) and (3 in self.option))) or (1 in self.option)):
-                total_packets = int.from_bytes(packet_cnt, 'big')  # Total number of packets in the transfer.
-
-                # When the data packet's sequence number is equal to the base number, buffer the data,
-                # increment the base number to request the next packet, and send the ACK for the packet.
-                if header == self.base:
-                    debug_print(f"GBN: Buffering data {header}")
-                    data_buffer.append(rcvd_data)
-                    self.base += 1
-                
-                self._send_ack(self.base, total_packets)
-            else:
-                debug_print(f"GBN: Checksum Invalid.")
-                continue
-
-        debug_print(f"GBN: Receive complete. (base = {self.base}, total_packets = {total_packets})")
-
-        return data_buffer
-
-    ##
-    # @fn       _send
-    # @brief    This method sends data to a receiving host and creates a timeout process that is used to monitor
-    #           if the packet will need to be resent.
-    #
-    # @param    data    - ByteArray object containing packet data.
-    #
-    # @return   None.
-    def _send(self, data):
-        self.base   = 0
+        self.base = 0
         self.seqnum = 0
 
         while True:
@@ -133,7 +88,7 @@ class RDTclass:
             while self.seqnum < window_end:
                 packet = self.create_header(data[self.seqnum], self.seqnum, len(data))
 
-                debug_print(f"GBN: Sending Packet {self.seqnum}/{len(data) - 1}")
+                debug_print(f"GBN: Sending Packet {self.seqnum}/{len(data) - 1}\n")
 
                 # Send the packet to the receiving host.
                 if (self.packet_lost(self.loss_rate) and (4 in self.option)):
@@ -167,8 +122,10 @@ class RDTclass:
 
         debug_print(f"GBN: Data transfer complete.")
         self._send_complete_f = True
-        return
 
+        # Close threads when done
+        recv_ack_t.join()
+    
     # waiting for the ACK response
     def _recv_ack(self):
         # Timeout is used to stop the receiver, which is initilized to 30
@@ -220,8 +177,6 @@ class RDTclass:
                 break
             if self._send_complete_f:
                 break
-            
-        return
 
     # this method is initialized to obtain the time-out value
     def _timeout(self, seqnum, retry):
@@ -246,8 +201,39 @@ class RDTclass:
         self._base_l.acquire()
         self.seqnum = self.base
         self._base_l.release()
+    
+    # Get packet on server side
+    def recv(self):
+        # Receive the number of bytes of data to be added
+        data_buffer     = []
+        total_packets   = 0xFFFF_FFFF
+        
+        # This loop is introduced to find the number of that are remaining for transmittion
+        while self.base < total_packets:
+            packet, address         = self.recv_sock.recvfrom(2048)
+            header, packet_cnt, rcvd_data, cs  = self.split_packet(packet)
+            header                  = int.from_bytes(header, 'big')         # Sequence number.
+            cs                      = int.from_bytes(cs, 'big')             # Packet checksum.
 
-        return
+            # Verify the integrity of the received packet.
+            if self.test_checksum(packet) and ((not ((self.packet_corrupted(self.corruption_rate)) and (3 in self.option))) or (1 in self.option)):
+                total_packets = int.from_bytes(packet_cnt, 'big')  # Total number of packets in the transfer.
+
+                # When the data packet's sequence number is equal to the base number, buffer the data,
+                # increment the base number to request the next packet, and send the ACK for the packet.
+                if header == self.base:
+                    debug_print(f"GBN: Buffering data {header}\n")
+                    data_buffer.append(rcvd_data)
+                    self.base += 1
+                
+                self._send_ack(self.base, total_packets)
+            else:
+                debug_print(f"GBN: Checksum Invalid.")
+                continue
+
+        debug_print(f"GBN: Receive complete. (base = {self.base}, total_packets = {total_packets})")
+
+        return data_buffer
 
     # checking for the ACK state
     def _send_ack(self, state, total_packets):
@@ -300,3 +286,7 @@ class RDTclass:
         # Split data then return True/False base on checksum similarity
         packet_data, packet_checksum = packet[:-2], packet[-2:]
         return packet_checksum == self.create_checksum(packet_data) # make sure both checksum are same then return true else false
+
+# Referenced Repos:
+# github.com/haseeb-saeed/go-back-N/blob/master/sender.py
+# github.com/suryadev99/GoBack-N-Protocol/blob/main/GBN.py
