@@ -16,28 +16,22 @@ def debug_print(message):
         print(message)
 
 class RDTclass:
-    def __init__(self, send_address, recv_address, send_port, recv_port, corruption_rate, loss_rate, option=[1, 2, 3, 4, 5], window_size = 10, timeout_val = 0.25):
+    def __init__(self, send_address, recv_address, send_port, recv_port, corruption_rate, loss_rate, option = 1, window_size = 10, timeout_val = 0.25):
         # Global Values
         self.ACK = 0x00 # 8-bit ACK value, hexadecimal
         self.packet_size = 1024 # packet size of 1024 byte as default
         self.Break_out = False
 
-        # Initialize the connection and set parameters
+        # Initialize the connection and set parameters for rate, option, and timeout
         self.send_address, self.recv_address = send_address, recv_address
         self.send_port, self.recv_port = send_port, recv_port
-
-        # Option for loss
-        self.option = option
-
-        # Parameters for corruption/loss rate, timeout value
-        self.corruption_rate = corruption_rate
-        self.loss_rate = loss_rate
+        self.corruption_rate, self.loss_rate, self.option = corruption_rate, loss_rate, option
         self.timeout_val = timeout_val
 
         # Go Back In parameters
         self.base = 0 # base value
         self.window_size = window_size # sliding window size
-        self.seqnum = 0
+        self.seqnum = 0 # current seq number
 
         # This list is used to keep track of timer objects associated with each packet's acknowledgment. 
         # Each element in this list corresponds to a packet's sequence number, and the timer associated with that sequence number. 
@@ -45,13 +39,12 @@ class RDTclass:
 
         # This list is used to keep track of the sequence numbers of packets that are waiting for acknowledgment. 
         # It is essentially a buffer containing the sequence numbers of the packets that have been sent and are awaiting acknowledgment. 
-        # The size of this buffer is determined by the window size 
         self.ACK_pending_buffer = list(range(self.window_size))
 
-        # Threads and Locks to synchronize access to shared resources amoung different threads
-        self.Base_thread = threading.Lock()
-        self.Send_thread = threading.Lock()
-        self.ACK_pending_thread = threading.Lock()
+        # Threads are use to synchronize access to shared resources amoung different threads
+        # Base thread to handle self.base values, Send thread to handle self.send_sock, ACK thread to handle ACK operation
+        self.thread_locks = [threading.Lock() for i in range(3)] # three threads declare
+        self.Base_thread, self.Send_thread, self.ACK_pending_thread = self.thread_locks # set thread locks
 
         # Create sender and receiver sockets
         self.send_sock = socket(AF_INET, SOCK_DGRAM)
@@ -64,16 +57,16 @@ class RDTclass:
  #
  #---------------------------------------------------------------------------------------------------------------------------------------------------- 
     # Send packets from client side
-    def send(self, data):
-        # Create thread for recieving ACK
+    def send(self, packet):
+        # Create thread for recieving ACK (#2)
         debug_print("Sender MSG: Starting ACK_recv thread...")
         ACK_recv_thread  = threading.Thread(target=self.recv_ACK)
         ACK_recv_thread.start()
 
         while True:
             # thread isolation, window size adjustment
-            with self.Base_thread:
-                window_end = min((self.base + self.window_size), len(data))
+            with self.Base_thread: # lock and replease (#3)
+                window_end = min((self.base + self.window_size), len(packet))
 
             # Signal Flag for end of transmission
             if self.Break_out:
@@ -82,14 +75,14 @@ class RDTclass:
             
             # Sliding window, send all packets within window size
             while self.seqnum < window_end:
-                debug_print("Sender MSG: Sending packet number " + str(self.seqnum) + " / " + str(len(data) - 1))
+                debug_print("Sender MSG: Sending packet number " + str(self.seqnum) + " / " + str(len(packet) - 1))
                 # Create packets with header - this includes seqnum, data, and size
-                packet = self.create_header(data[self.seqnum], self.seqnum, len(data))
+                cur_packet = self.create_header(packet[self.seqnum], self.seqnum, len(packet))
 
                 # Send the packet to the receiving host.
                 if not (self.Datapacketloss()):
                     with self.Send_thread:
-                        self.send_sock.sendto(packet, (self.send_address, self.send_port))
+                        self.send_sock.sendto(cur_packet, (self.send_address, self.send_port))
                 else:
                     debug_print("Sender MSG: Data packet loss!")
 
@@ -108,11 +101,12 @@ class RDTclass:
                     except RuntimeError as e:
                         # Handle the specific exception (RuntimeError) that may occur when starting the timer
                         debug_print("Error starting timer: " + str(e))
+                # slide window seqnum
                 self.seqnum += 1
 
             # Handle breakout
             with self.Base_thread:
-                if self.base == len(data):
+                if self.base == len(packet):
                     debug_print("Sender MSG: Send method completed!")
                     self.Break_out = True
                     break
@@ -241,28 +235,32 @@ class RDTclass:
  #
  #----------------------------------------------------------------------------------------------------------------------------------------------------
     
-    # Option 2 - ACK packet bit-error
+    # Option 2 - ACK packet bit-error (#4)
     def ACKbiterror(self, packet):
         checksum_invalid = not self.test_checksum(packet)
-        bit_errors_simulated = (2 in self.option) and (not 1 in self.option) and self.packet_corrupted(self.corruption_rate)
+        option_configured = (self.option == 2) # option 2 must be selected
+        invalid_option = not (self.option == 1)
+        bit_errors_simulated = option_configured and invalid_option and self.packet_corrupted(self.corruption_rate)
         return checksum_invalid or bit_errors_simulated
     
     # Option 3 - Data packet bit-error
     def Databiterror(self, packet): 
         checksum_valid = self.test_checksum(packet)
-        bit_errors_not_simulated = not ((self.packet_corrupted(self.corruption_rate)) and (3 in self.option)) or (1 in self.option)
+        option_configured = (self.option == 3) # option 3 must be selected
+        secondary_option = (self.option == 1) # return True right away
+        bit_errors_not_simulated = not ((self.packet_corrupted(self.corruption_rate)) and (option_configured)) or secondary_option
         return checksum_valid and bit_errors_not_simulated
     
     # Option 4 - ACK packet loss
     def ACKpacketloss(self):
         packet_loss_simulated = self.packet_lost(self.loss_rate)
-        option_configured = (4 in self.option)
+        option_configured = (self.option == 4)
         return packet_loss_simulated and option_configured
 
     # Option 5 - Data packet loss
     def Datapacketloss(self):
         packet_loss_simulated = self.packet_lost(self.loss_rate)
-        option_configured = (5 in self.option)
+        option_configured = (self.option == 5)
         return packet_loss_simulated and option_configured
 
     def create_header(self, packet, Cur_num, total):
@@ -281,11 +279,11 @@ class RDTclass:
         return SeqNum, total_count, data, checksum
 
     def packet_corrupted(self, percentage):
-        # Return chance that packet is corrupted, True if corrupted, False if not corrupted
+        # Return chance that packet is corrupted, True if corrupted, False if not corrupted (#5)
         return self.corruption_rate >= randrange(1, 101)
 
     def packet_lost(self, percentage):
-        # Return chance that packet is loss during transmission, True if loss, False if not loss
+        # Return chance that packet is loss during transmission, True if loss, False if not loss (#6)
         return self.loss_rate >= randrange(1, 101)
 
     def create_checksum(self, packet, bits=16):
@@ -304,8 +302,8 @@ class RDTclass:
         packet_data, packet_checksum = packet[:-2], packet[-2:]
         return packet_checksum == self.create_checksum(packet_data) # make sure both checksum are same then return true else false
 
-## Referenced Repos ---------------------------------------------------------------------------------------------------------------
+## Referenced Repos -------------------------------------------------------------------------------------------------------------------------------
 ## github.com/shihrer/csci466.project2/blob/master/RDT.py (debug_log function) (#1)
 ## github.com/haseeb-saeed/go-back-N/blob/master/sender.py (threads locking template) (#2,3)
-## github.com/suryadev99/GoBack-N-Protocol/blob/main/GBN.py (self. class usage - settimeout (#))
-## github.com/CantOkan/BIL441_Computer_Networks/blob/master/RDT_Protocols/RDT2. (randint for corruption methods) ()
+## github.com/suryadev99/GoBack-N-Protocol/blob/main/GBN.py (self. class usage - loss/error functions (#4))
+## github.com/CantOkan/BIL441_Computer_Networks/blob/master/RDT_Protocols/RDT2. (randint for corruption methods) (#5, 6)
