@@ -1,6 +1,7 @@
  #----------------------------------------------------------------------------------------------------------------------------------------------------
  #
  # Network Design 4830 - Phase 5
+ # Implement Go-Back-N protocol over an unreliable UDP channel
  #
  #----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -63,28 +64,21 @@ class RDTclass:
         ACK_recv_thread  = threading.Thread(target=self.recv_ACK)
         ACK_recv_thread.start()
 
-        while True:
-            # thread isolation, window size adjustment
-            with self.Base_thread: # lock and replease (#3)
-                window_end = min((self.base + self.window_size), len(packet))
-
-            # Signal Flag for end of transmission
-            if self.Break_out:
-                debug_print("Sender MSG: Shut down...")
-                break
-            
+        while True:            
             # Sliding window, send all packets within window size
-            while self.seqnum < window_end:
+            while (self.seqnum < (self.base + self.window_size)) and (self.seqnum < len(packet)):
                 debug_print("Sender MSG: Sending packet number " + str(self.seqnum) + " / " + str(len(packet) - 1))
                 # Create packets with header - this includes seqnum, data, and size
                 cur_packet = self.create_header(packet[self.seqnum], self.seqnum, len(packet))
 
                 # Send the packet to the receiving host.
-                if not (self.Datapacketloss()):
+                if (self.Datapacketloss()):
+                    debug_print("Sender MSG: Data packet loss!")
+                elif (self.ACKpacketloss()):
+                    debug_print("Sender MSG: ACK packet loss!")
+                else:
                     with self.Send_thread:
                         self.send_sock.sendto(cur_packet, (self.send_address, self.send_port))
-                else:
-                    debug_print("Sender MSG: Data packet loss!")
 
                 # Timer handling for each packet in window size, including adjustment and creation
                 with self.ACK_pending_thread:
@@ -100,8 +94,8 @@ class RDTclass:
                         self.ACK_timer_buffer[self.seqnum].start()
                     except RuntimeError as e:
                         # Handle the specific exception (RuntimeError) that may occur when starting the timer
-                        debug_print("Error starting timer: " + str(e))
-                # slide window seqnum
+                        debug_print("Sender MSG: Error starting timer: " + str(e))
+                # Slide window seqnum
                 self.seqnum += 1
 
             # Handle breakout
@@ -121,22 +115,18 @@ class RDTclass:
             if self.Break_out:
                 return
 
-            # check for recv
+            # check for recv and split each packet
             packet, address = self.recv_sock.recvfrom(self.packet_size)
-
-            # Split each packets
             SeqNum, packet_count, data, checksum  = self.split_packet(packet)
 
             # Convert from bytes to int
-            SeqNum, total_packets= int.from_bytes(SeqNum, 'big'), int.from_bytes(packet_count, 'big')
-            data, checksum = int.from_bytes(data, 'big'), int.from_bytes(checksum, 'big')
+            SeqNum, total_data= int.from_bytes(SeqNum, byteorder = 'big'), int.from_bytes(packet_count, byteorder = 'big')
+            data, checksum = int.from_bytes(data, byteorder = 'big'), int.from_bytes(checksum, byteorder = 'big')
             
             # Check if ACK has a bit error, ensure not last packet
             if (self.ACKbiterror(packet)) and (SeqNum != total_packets):
                 debug_print("Sender MSG: ACK packet bit-error - Checksum failed!")
                 continue # skip iteration
-
-            total_data = int.from_bytes(packet_count, 'big') # Total number of packets in the transfer.
             
             # Ensure thread isolation while looping 
             with self.Base_thread:
@@ -156,7 +146,7 @@ class RDTclass:
     # this method is initialized to obtain the time-out value
     def handle_timeout(self, seqnum):
         debug_print("Sender MSG: ACK" + str(seqnum) + " has timed out")
-        debug_print("Resending window of size = " + str(self.window_size) + ", with base number = " + str(self.base))
+        debug_print("Sender MSG: Resending at base number = " + str(self.base))
 
         # Cancel timers for the remaining packets in the window
         with self.ACK_pending_thread:
@@ -182,8 +172,8 @@ class RDTclass:
  #---------------------------------------------------------------------------------------------------------------------------------------------------- 
     # Get packet on server side
     def recv(self):
-        # Initialize the total number of expected packets
-        total_packets = 0xFFFF_FFFF
+        # Initialize very large number
+        total_packets = float('inf')
         # Initialize an empty buffer to store received data
         packet_data = []
 
@@ -192,16 +182,13 @@ class RDTclass:
             # Receive a packet and extract header, packet count, received data, and checksum
             packet, address = self.recv_sock.recvfrom(self.packet_size + 10)
             SeqNum, packet_count, data, checksum = self.split_packet(packet)
-            SeqNum = int.from_bytes(SeqNum, 'big')
-            checksum = int.from_bytes(checksum, 'big')
+            SeqNum, checksum = int.from_bytes(SeqNum, byteorder = 'big'), int.from_bytes(checksum, byteorder = 'big')
+            total_packets = int.from_bytes(packet_count, byteorder = 'big')
 
             # Check if the packet is corrupted or the checksum is invalid
             if not (self.Databiterror(packet)):
                 debug_print("Receiver MSG: Data packet bit-error - Checksum failed!")
                 continue
-
-            # Update the total number of packets based on the received packet count
-            total_packets = int.from_bytes(packet_count, 'big')
 
             # If the header matches the base, buffer the data and increment the base
             if SeqNum == self.base:
@@ -222,12 +209,7 @@ class RDTclass:
     def send_ACK(self, seqnum, total_count):
         # Introduce simulated packet loss. In the event of packet loss, skip the ACK/NAK response process.
         debug_print("Receiver MSG: Sending ACK " + str(seqnum) + "/" + str(total_count))
-
-        if not (self.ACKpacketloss()):
-            # Create header then send
-            self.send_sock.sendto(self.create_header(self.ACK.to_bytes(1, 'big'), seqnum, total_count), (self.send_address, self.send_port))
-        else:
-            debug_print("Receiver MSG: ACK packet loss!")
+        self.send_sock.sendto(self.create_header(self.ACK.to_bytes(1, 'big'), seqnum, total_count), (self.send_address, self.send_port))
 
  #----------------------------------------------------------------------------------------------------------------------------------------------------
  #
@@ -302,7 +284,7 @@ class RDTclass:
         packet_data, packet_checksum = packet[:-2], packet[-2:]
         return packet_checksum == self.create_checksum(packet_data) # make sure both checksum are same then return true else false
 
-## Referenced Repos -------------------------------------------------------------------------------------------------------------------------------
+## Referenced Repos -----------------------------------------------------------------------------------------------------------------------------
 ## github.com/shihrer/csci466.project2/blob/master/RDT.py (debug_log function) (#1)
 ## github.com/haseeb-saeed/go-back-N/blob/master/sender.py (threads locking template) (#2,3)
 ## github.com/suryadev99/GoBack-N-Protocol/blob/main/GBN.py (self. class usage - loss/error functions (#4))
