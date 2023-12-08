@@ -91,25 +91,23 @@ class RDTclass:
                     with self.Send_thread:
                         self.send_sock.sendto(packet, (self.send_address, self.send_port))
                 else:
-                    debug_print("Sender MSG:: Data packet loss!")
-                    pass
+                    debug_print("Sender MSG: Data packet loss!")
 
                 # Timer handling for each packet in window size, including adjustment and creation
                 with self.ACK_pending_thread:
                     # Check if the sequence number is within the bounds of the ACK timer buffer
                     if self.seqnum < (len(self.ACK_timer_buffer) - 1):
                         # If yes, update the existing timer for the current sequence number
-                        self.ACK_timer_buffer[self.seqnum] = threading.Timer(self.timeout_val, self.handle_timeout, (self.seqnum, 0,))
+                        self.ACK_timer_buffer[self.seqnum] = threading.Timer(self.timeout_val, self.handle_timeout, (self.seqnum,))
                     else:
                         # If no, the sequence number is beyond the current buffer size, so add a new timer
-                        self.ACK_timer_buffer.append(threading.Timer(self.timeout_val, self.handle_timeout, (self.seqnum, 0,)))
-
+                        self.ACK_timer_buffer.append(threading.Timer(self.timeout_val, self.handle_timeout, (self.seqnum,)))
                     try:
                         # Attempt to start the timer associated with the current sequence number
                         self.ACK_timer_buffer[self.seqnum].start()
-                    except:
-                        # Handle any exceptions that may occur when starting the timer
-                        pass
+                    except RuntimeError as e:
+                        # Handle the specific exception (RuntimeError) that may occur when starting the timer
+                        debug_print("Error starting timer: " + str(e))
                 self.seqnum += 1
 
             # Handle breakout
@@ -139,47 +137,49 @@ class RDTclass:
             SeqNum, total_packets= int.from_bytes(SeqNum, 'big'), int.from_bytes(packet_count, 'big')
             data, checksum = int.from_bytes(data, 'big'), int.from_bytes(checksum, 'big')
             
+            # Check if ACK has a bit error, ensure not last packet
             if (self.ACKbiterror(packet)) and (SeqNum != total_packets):
                 debug_print("Sender MSG: ACK packet bit-error - Checksum failed!")
-                continue
-            else:
-                total_data = int.from_bytes(packet_count, 'big') # Total number of packets in the transfer.
+                continue # skip iteration
 
+            total_data = int.from_bytes(packet_count, 'big') # Total number of packets in the transfer.
+            
+            # Ensure thread isolation while looping 
             with self.Base_thread:
                 while (SeqNum > self.base):
                     with self.ACK_pending_thread:
                         debug_print("Sender MSG: ACK" + str(SeqNum) + " has been received")  
-                        try:
-                            self.ACK_timer_buffer[self.base].cancel()
-                        except:
-                            pass
-            
+                        self.ACK_timer_buffer[self.base].cancel()
+
                     debug_print("Sender MSG: Shifting Base!\n")
                     self.base += 1
 
+            # Exit conditions - if size is over total data
             if (self.base >= total_data) or (self.Break_out):
                 debug_print("Sender MSG: recieve ACK method completed!")
                 break
 
     # this method is initialized to obtain the time-out value
-    def handle_timeout(self, seqnum, retry):
-        retry_cnt = retry + 1
-        if retry_cnt >= 100:
-            self.Break_out = True
-            return
-
+    def handle_timeout(self, seqnum):
         debug_print("Sender MSG: ACK" + str(seqnum) + " has timed out")
         debug_print("Resending window of size = " + str(self.window_size) + ", with base number = " + str(self.base))
 
+        # Cancel timers for the remaining packets in the window
         with self.ACK_pending_thread:
-            for timer in self.ACK_timer_buffer[self.base:]:
-                try:
-                    timer.cancel()
-                except:
-                    continue
+            self.cancel_timers_from_base()
 
+        # Reset the sequence number to the base
         with self.Base_thread:
-            self.seqnum = self.base
+            self.reset_seqnum()
+
+    def cancel_timers_from_base(self):
+        # loop through buffer
+        for timer in self.ACK_timer_buffer[self.base:]:
+            timer.cancel()
+
+    def reset_seqnum(self):
+        # Set seqnum back to base
+        self.seqnum = self.base
 
  #----------------------------------------------------------------------------------------------------------------------------------------------------
  #
@@ -218,7 +218,7 @@ class RDTclass:
             # Send an acknowledgment for the received packet
             self.send_ACK(self.base, total_packets)
 
-        # Print a message indicating the completion of the reception process
+        # Print a message for completion
         debug_print("Receiver MSG: Receive method completed...")
 
         # Return the received data buffer
