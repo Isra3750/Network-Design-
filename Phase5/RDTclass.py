@@ -117,11 +117,11 @@ class RDTclass:
 
             # check for recv and split each packet
             packet, address = self.recv_sock.recvfrom(self.packet_size)
-            SeqNum, packet_count, data, checksum  = self.split_packet(packet)
+            SeqNum, packet_count, checksum, data  = self.split_packet(packet)
 
             # Convert from bytes to int
             SeqNum, total_data= int.from_bytes(SeqNum, byteorder = 'big'), int.from_bytes(packet_count, byteorder = 'big')
-            data, checksum = int.from_bytes(data, byteorder = 'big'), int.from_bytes(checksum, byteorder = 'big')
+            checksum, data = int.from_bytes(checksum, byteorder = 'big'), int.from_bytes(data, byteorder = 'big')
             
             # Check if ACK has a bit error, ensure not last packet
             if (self.ACKbiterror(packet)) and (SeqNum != total_packets):
@@ -181,9 +181,9 @@ class RDTclass:
         while self.base < total_packets:
             # Receive a packet and extract header, packet count, received data, and checksum
             packet, address = self.recv_sock.recvfrom(self.packet_size + 10)
-            SeqNum, packet_count, data, checksum = self.split_packet(packet)
-            SeqNum, checksum = int.from_bytes(SeqNum, byteorder = 'big'), int.from_bytes(checksum, byteorder = 'big')
-            total_packets = int.from_bytes(packet_count, byteorder = 'big')
+            SeqNum, packet_count, checksum, data = self.split_packet(packet)
+            SeqNum, total_packets = int.from_bytes(SeqNum, byteorder = 'big'), int.from_bytes(packet_count, byteorder = 'big')
+            checksum = int.from_bytes(checksum, byteorder = 'big')
 
             # Check if the packet is corrupted or the checksum is invalid
             if not (self.Databiterror(packet)):
@@ -192,8 +192,8 @@ class RDTclass:
 
             # If the header matches the base, buffer the data and increment the base
             if SeqNum == self.base:
-                debug_print("Receiver MSG: Received packet number = " + str(SeqNum) + "\n")
-                packet_data.append(data)
+                debug_print("Receiver MSG: Writing packet number to output = " + str(SeqNum) + "\n")
+                packet_data.append(data) # write to packet_data
                 self.base += 1
 
             # Send an acknowledgment for the received packet
@@ -249,16 +249,15 @@ class RDTclass:
         # Create SeqNum, total_size, and checksum to each package
         SeqNum = Cur_num.to_bytes(4, 'big')
         total_count = total.to_bytes(4, 'big')
-        checksum = self.create_checksum(SeqNum + total_count + packet) # create checksum
-        header_packet = SeqNum + total_count + packet + checksum
+        checksum = self.create_checksum(SeqNum + total_count + packet)  # create checksum (2 bytes)
+        header_packet = SeqNum + total_count + checksum + packet
         return header_packet
 
     def split_packet(self, header_packet):
-        # Split packets into 4 sections, SeqNum, Total_count, data, checksum
-        SeqNum, total_count = header_packet[0:4], header_packet[4:8]
-        data = header_packet[8:-2]
-        checksum = header_packet[-2:]
-        return SeqNum, total_count, data, checksum
+        # Split packets into 4 sections, SeqNum, Total_count, checksum, data
+        SeqNum, total_count, checksum = header_packet[0:4], header_packet[4:8], header_packet[8:10]
+        data = header_packet[10:]
+        return SeqNum, total_count, checksum, data
 
     def packet_corrupted(self, percentage):
         # Return chance that packet is corrupted, True if corrupted, False if not corrupted (#5)
@@ -281,8 +280,9 @@ class RDTclass:
 
     def test_checksum(self, packet):
         # Split data then return True/False base on checksum similarity
-        packet_data, packet_checksum = packet[:-2], packet[-2:]
-        return packet_checksum == self.create_checksum(packet_data) # make sure both checksum are same then return true else false
+        SeqNum, total_count, checksum, packet_data = packet[0:4], packet[4:8], packet[8:10], packet[10:]
+        calculated_checksum = self.create_checksum(SeqNum + total_count + packet_data)
+        return checksum == calculated_checksum  # make sure both checksums are the same then return true else false
 
 ## Referenced Repos -----------------------------------------------------------------------------------------------------------------------------
 ## github.com/shihrer/csci466.project2/blob/master/RDT.py (debug_log function) (#1)
