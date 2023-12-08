@@ -17,7 +17,7 @@ def debug_print(message):
         print(message)
 
 class RDTclass:
-    def __init__(self, send_address, recv_address, send_port, recv_port, corruption_rate, loss_rate, option = 1, window_size = 10, timeout_val = 0.25):
+    def __init__(self, send_address, recv_address, send_port, recv_port, corruption_rate, loss_rate, option = 1, window_size = 10, timeout_val = 0.03):
         # Global Values
         self.ACK = 0x00 # 8-bit ACK value, hexadecimal
         self.packet_size = 1024 # packet size of 1024 byte as default
@@ -102,6 +102,7 @@ class RDTclass:
             with self.Base_thread:
                 if self.base == len(packet):
                     debug_print("Sender MSG: Send method completed!")
+                    time.sleep(0.5)
                     self.Break_out = True
                     break
 
@@ -113,6 +114,7 @@ class RDTclass:
         while True:
             # Check if send method has been completed
             if self.Break_out:
+                time.sleep(0.5)
                 return
 
             # check for recv and split each packet
@@ -220,28 +222,30 @@ class RDTclass:
     # Option 2 - ACK packet bit-error (#4)
     def ACKbiterror(self, packet):
         checksum_invalid = not self.test_checksum(packet)
+        is_corrupted = (self.corruption_rate >= randrange(1, 101)) # randomize corrupt chance
         option_configured = (self.option == 2) # option 2 must be selected
         invalid_option = not (self.option == 1)
-        bit_errors_simulated = option_configured and invalid_option and self.packet_corrupted(self.corruption_rate)
+        bit_errors_simulated = option_configured and invalid_option and is_corrupted
         return checksum_invalid or bit_errors_simulated
     
     # Option 3 - Data packet bit-error
     def Databiterror(self, packet): 
         checksum_valid = self.test_checksum(packet)
+        is_corrupted = (self.corruption_rate >= randrange(1, 101)) # randomize corrupt chance
         option_configured = (self.option == 3) # option 3 must be selected
         secondary_option = (self.option == 1) # return True right away
-        bit_errors_not_simulated = not ((self.packet_corrupted(self.corruption_rate)) and (option_configured)) or secondary_option
+        bit_errors_not_simulated = not (is_corrupted and option_configured) or secondary_option
         return checksum_valid and bit_errors_not_simulated
     
     # Option 4 - ACK packet loss
     def ACKpacketloss(self):
-        packet_loss_simulated = self.packet_lost(self.loss_rate)
+        packet_loss_simulated = (self.loss_rate >= randrange(1, 101))
         option_configured = (self.option == 4)
         return packet_loss_simulated and option_configured
 
     # Option 5 - Data packet loss
     def Datapacketloss(self):
-        packet_loss_simulated = self.packet_lost(self.loss_rate)
+        packet_loss_simulated = (self.loss_rate >= randrange(1, 101))
         option_configured = (self.option == 5)
         return packet_loss_simulated and option_configured
 
@@ -258,14 +262,6 @@ class RDTclass:
         SeqNum, total_count, checksum = header_packet[0:4], header_packet[4:8], header_packet[8:10]
         data = header_packet[10:]
         return SeqNum, total_count, checksum, data
-
-    def packet_corrupted(self, percentage):
-        # Return chance that packet is corrupted, True if corrupted, False if not corrupted (#5)
-        return self.corruption_rate >= randrange(1, 101)
-
-    def packet_lost(self, percentage):
-        # Return chance that packet is loss during transmission, True if loss, False if not loss (#6)
-        return self.loss_rate >= randrange(1, 101)
 
     def create_checksum(self, packet, bits=16):
         # Calculate the checksum for the packet, create 16-bit values
