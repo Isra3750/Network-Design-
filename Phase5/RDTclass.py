@@ -21,7 +21,7 @@ import threading
 TIMEOUT = 0.03          # Timer value (seconds)
 ERROR_RATE_VAL = 5     # percentage for loss and corruption rate
 WINDOW_SIZE = 10       # size of window
-OPTION = 3              # options
+OPTION = 4              # options
 PRINT_OUTPUT = True    # print message
 
 # On / Off print statement, save time if off (#1)
@@ -91,22 +91,23 @@ class RDTclass:
                 else:
                     with self.Send_thread:
                         self.send_sock.sendto(cur_packet, (self.send_address, self.send_port))
-
-                # Timer handling for each packet in window size, including adjustment and creation
+                # Timer handling for each packet in the window size
                 with self.ACK_pending_thread:
-                    # Check if the sequence number is within the bounds of the ACK timer buffer
+                    # Check if the sequence number is within the range of the ACK timer buffer
                     if self.seqnum in range(len(self.ACK_timer_buffer) - 1):
                         # If yes, update the existing timer for the current sequence number
-                        self.ACK_timer_buffer[self.seqnum] = threading.Timer(self.timeout_val, self.handle_timeout, (self.seqnum,))
+                        self.update_timer()
                     else:
-                        # If no, the sequence number is beyond the current buffer size, so add a new timer
-                        self.ACK_timer_buffer.append(threading.Timer(self.timeout_val, self.handle_timeout, (self.seqnum,)))
-                    try:
-                        # Attempt to start the timer associated with the current sequence number
-                        self.ACK_timer_buffer[self.seqnum].start()
-                    except RuntimeError as e:
-                        # Handle the specific exception (RuntimeError) that may occur when starting the timer
-                        debug_print("Sender MSG: Error starting timer: " + str(e))
+                        # If no, the seqnum is beyond the current buffer size, create timer
+                        self.create_timer()
+                # Timer starts
+                try:
+                    # Attempt to start the timer associated with the current seqnum
+                    self.start_timer()
+                # Handle the specific exception (RuntimeError) that might occur when starting the timer
+                except RuntimeError as e:
+                    debug_print("Sender MSG: Error starting timer: " + str(e))
+
                 # Slide window seqnum
                 self.seqnum += 1
 
@@ -165,21 +166,32 @@ class RDTclass:
 
         # Cancel timers for the remaining packets in the window
         with self.ACK_pending_thread:
-            self.cancel_timers_from_base()
+            self.cancel_all_timer()
 
         # Reset the sequence number to the base
         with self.Base_thread:
             self.reset_seqnum()
 
-    def cancel_timers_from_base(self):
-        # loop through buffer
-        for timer in self.ACK_timer_buffer[self.base:]:
-            timer.cancel()
-
     def reset_seqnum(self):
         # Set seqnum back to base
         self.seqnum = self.base
 
+    def create_timer(self):
+        # Create timer and append to buffer
+        self.ACK_timer_buffer.append(threading.Timer(self.timeout_val, self.handle_timeout, (self.seqnum,)))
+
+    def update_timer(self):
+         # Update timer in buffer
+        self.ACK_timer_buffer[self.seqnum] = (threading.Timer(self.timeout_val, self.handle_timeout, (self.seqnum,)))
+
+    def cancel_all_timer(self):
+        # loop through buffer
+        for timer in self.ACK_timer_buffer[self.base:]:
+            timer.cancel()
+
+    def start_timer(self):
+        # Start timer
+        self.ACK_timer_buffer[self.seqnum].start()
  #----------------------------------------------------------------------------------------------------------------------------------------------------
  #
  # Server-side methods 
@@ -229,12 +241,12 @@ class RDTclass:
     
     # Option 2 - ACK packet bit-error (#4)
     def ACKbiterror(self, packet):
-        checksum_invalid = not self.test_checksum(packet)
+        checksum_valid = self.test_checksum(packet)
         is_corrupted = (self.error_rate >= randrange(1, 101)) # randomize corrupt chance
-        option_configured = (self.option == 2) # option 2 must be selected
-        invalid_option = not (self.option == 1)
-        bit_errors_simulated = option_configured and invalid_option and is_corrupted
-        return checksum_invalid or bit_errors_simulated
+        option_configured = (self.option == 2) # option 3 must be selected
+        secondary_option = (self.option == 1) # return True right away
+        bit_errors_not_simulated = not (is_corrupted and option_configured) or secondary_option
+        return not (checksum_valid and bit_errors_not_simulated)
     
     # Option 3 - Data packet bit-error
     def Databiterror(self, packet): 
