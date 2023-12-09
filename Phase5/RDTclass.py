@@ -4,7 +4,7 @@
 # Implement Go-Back-N protocol over an unreliable UDP channel
 #
 #----------------------------------------------------------------------------------------------------------------------------------------------------
-# Imports modules
+# Imports required modules
 from socket import * # socket libary for server and client binding
 from random import * # corruption methods
 from time import *
@@ -18,10 +18,10 @@ import threading
 # 5. Option 5 - Data packet loss
 
 # Class values
-TIMEOUT = 0.03          # Timer value (seconds)
+TIMEOUT = 0.1          # Timer value (seconds)
 ERROR_RATE_VAL = 5     # percentage for loss and corruption rate
 WINDOW_SIZE = 10       # size of window
-OPTION = 4              # options
+OPTION = 5             # options
 PRINT_OUTPUT = True    # print message
 
 # On / Off print statement, save time if off (#1)
@@ -30,17 +30,18 @@ def debug_print(message):
         print(message)
 
 class RDTclass:
-    def __init__(self, send_address, recv_address, send_port, recv_port):
-        # Global Values
-        self.ACK = 0x00 # 8-bit ACK value, hexadecimal
-        self.packet_size = 1024 # packet size of 1024 byte as default
-        self.Break_out = False # Break out flag
-
+    def __init__(self, sender_address, receive_address, sender_port, receive_port):
         # Initialize the connection and set parameters for rate, option, and timeout
-        self.send_address, self.recv_address = send_address, recv_address
-        self.send_port, self.recv_port = send_port, recv_port
+        self.sender_address, self.receive_address = sender_address, receive_address
+        self.sender_port, self.receive_port = sender_port, receive_port
         self.error_rate, self.option = ERROR_RATE_VAL, OPTION
         self.timeout_val = TIMEOUT
+
+        # Global Values
+        self.ACK = 0x00 # 8-bit ACK value, hexadecimal
+        self.packet_size = 1024 # packet size of 1024 byte as defaul
+        self.header_size = 10 # size of header for each packet
+        self.Break_out = False # Break out flag
 
         # Go Back In parameters
         self.base = 0 # base value
@@ -50,19 +51,15 @@ class RDTclass:
         # This is used to keep track of each packets timer ACKs
         self.ACK_timer_buffer = []
 
-        # This is used to keep track of the seqnum of packets that are waiting for ACKs. 
-        # It's basically a buffer containing the seqnum of the packets that have been sent and are awaiting ACKs. 
-        self.ACK_pending_buffer = list(range(self.window_size))
-
         # Threads are use to synchronize access to shared resources amoung different threads
-        # Base thread to handle self.base values, Send thread to handle self.send_sock, ACK thread to handle ACK operations
-        self.thread_locks = [threading.Lock() for i in range(3)] # three threads declare
-        self.Base_thread, self.Send_thread, self.ACK_pending_thread = self.thread_locks # set thread locks
+        # Base thread to handle self.base values, ACK thread to handle ACK operations
+        self.thread_locks = [threading.Lock() for i in range(2)] # two threads declare
+        self.Base_thread, self.ACK_pending_thread = self.thread_locks # set thread locks
 
         # Create sender and receiver sockets
         self.send_sock = socket(AF_INET, SOCK_DGRAM)
         self.recv_sock = socket(AF_INET, SOCK_DGRAM)
-        self.recv_sock.bind((self.recv_address, self.recv_port))
+        self.recv_sock.bind((self.receive_address, self.receive_port))
 
  #----------------------------------------------------------------------------------------------------------------------------------------------------
  #
@@ -89,8 +86,7 @@ class RDTclass:
                 elif (self.ACKpacketloss()):
                     debug_print("Sender MSG: ACK packet loss!")
                 else:
-                    with self.Send_thread:
-                        self.send_sock.sendto(cur_packet, (self.send_address, self.send_port))
+                    self.send_sock.sendto(cur_packet, (self.sender_address, self.sender_port))
                 # Timer handling for each packet in the window size
                 with self.ACK_pending_thread:
                     # Check if the sequence number is within the range of the ACK timer buffer
@@ -132,16 +128,11 @@ class RDTclass:
 
             # check for recv and split each packet
             packet, address = self.recv_sock.recvfrom(self.packet_size)
-            SeqNum, packet_count, checksum, data  = self.split_packet(packet)
+            SeqNum, packet_count, checksum, data = self.split_packet(packet)
 
             # Convert from bytes to int
             SeqNum, total_data= int.from_bytes(SeqNum, byteorder = 'big'), int.from_bytes(packet_count, byteorder = 'big')
             checksum, data = int.from_bytes(checksum, byteorder = 'big'), int.from_bytes(data, byteorder = 'big')
-            
-            # Check if ACK has a bit error, ensure not last packet
-            if (self.ACKbiterror(packet)) and (SeqNum != total_packets):
-                debug_print("Sender MSG: ACK packet bit-error - Checksum failed!")
-                continue # skip iteration
             
             # Ensure thread isolation while looping 
             with self.Base_thread:
@@ -152,7 +143,7 @@ class RDTclass:
                         self.ACK_timer_buffer[self.base].cancel()
 
                     debug_print("Sender MSG: Shifting Base value")
-                    self.base += 1
+                    self.base += 1 # shift base value after ACK
 
             # Exit conditions - if size is over total data
             if (self.base >= total_data) or (self.Break_out):
@@ -200,21 +191,24 @@ class RDTclass:
     # Get packet on server side
     def recv(self):
         # Initialize very large number
-        total_packets = float('inf')
+        packet_count = float('inf')
         # Initialize an empty buffer to store received data
         packet_data = []
 
         # Continue receiving packets until the base reaches the total number of expected packets
-        while self.base < total_packets:
+        while self.base < packet_count:
             # Receive a packet and extract header, packet count, received data, and checksum
-            packet, address = self.recv_sock.recvfrom(self.packet_size + 10)
+            packet, address = self.recv_sock.recvfrom(self.packet_size + self.header_size)
             SeqNum, packet_count, checksum, data = self.split_packet(packet)
-            SeqNum, total_packets = int.from_bytes(SeqNum, byteorder = 'big'), int.from_bytes(packet_count, byteorder = 'big')
+            SeqNum, packet_count = int.from_bytes(SeqNum, byteorder = 'big'), int.from_bytes(packet_count, byteorder = 'big')
             checksum = int.from_bytes(checksum, byteorder = 'big')
 
             # Check if the packet is corrupted or the checksum is invalid
             if not (self.Databiterror(packet)):
                 debug_print("Receiver MSG: Data packet bit-error - Checksum failed!")
+                continue
+            elif not (self.ACKbiterror(packet)):
+                debug_print("Receiver MSG: ACK packet bit-error - Checksum failed!")
                 continue
 
             # If the header matches the base, buffer the data and increment the base
@@ -225,7 +219,7 @@ class RDTclass:
 
             # Send an acknowledgment for the received packet
             debug_print("Receiver MSG: Sending ACK " + str(self.base))
-            self.send_sock.sendto(self.create_header(self.ACK.to_bytes(1, 'big'), self.base, total_packets), (self.send_address, self.send_port))
+            self.send_sock.sendto(self.create_header(self.ACK.to_bytes(1, byteorder = 'big'), self.base, packet_count), (self.sender_address, self.sender_port))
 
         # Print a message for completion
         debug_print("Receiver MSG: Received all packets")
@@ -243,10 +237,10 @@ class RDTclass:
     def ACKbiterror(self, packet):
         checksum_valid = self.test_checksum(packet)
         is_corrupted = (self.error_rate >= randrange(1, 101)) # randomize corrupt chance
-        option_configured = (self.option == 2) # option 3 must be selected
+        option_configured = (self.option == 2) # option 2 must be selected
         secondary_option = (self.option == 1) # return True right away
         bit_errors_not_simulated = not (is_corrupted and option_configured) or secondary_option
-        return not (checksum_valid and bit_errors_not_simulated)
+        return (checksum_valid and bit_errors_not_simulated)
     
     # Option 3 - Data packet bit-error
     def Databiterror(self, packet): 
@@ -279,7 +273,7 @@ class RDTclass:
 
     def split_packet(self, header_packet):
         # Split packets into 4 sections, SeqNum, Total_count, checksum, data
-        SeqNum, total_count, checksum = header_packet[0:4], header_packet[4:8], header_packet[8:10]
+        SeqNum, total_count, checksum = header_packet[0:4], header_packet[4:8], header_packet[8:10] # Create 10 byte header
         data = header_packet[10:]
         return SeqNum, total_count, checksum, data
 
