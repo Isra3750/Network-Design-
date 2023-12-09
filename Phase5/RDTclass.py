@@ -7,8 +7,8 @@
 # Imports modules
 from socket import * # socket libary for server and client binding
 from random import * # corruption methods
+from time import *
 import threading
-import time
 
 # Set parameters for class from instruction note (Phase 5.pdf):
 # 1. Option 1 - No loss/bit-errors
@@ -17,12 +17,12 @@ import time
 # 4. Option 4 - ACK packet loss
 # 5. Option 5 - Data packet loss
 
-# Default values
+# Class values
 TIMEOUT = 0.03          # Timer value (seconds)
-ERROR_RATE_VAL = 20     # percentage for loss and corruption rate
+ERROR_RATE_VAL = 5     # percentage for loss and corruption rate
 WINDOW_SIZE = 10       # size of window
 OPTION = 3              # options
-PRINT_OUTPUT = False     # print message
+PRINT_OUTPUT = True    # print message
 
 # On / Off print statement, save time if off (#1)
 def debug_print(message):
@@ -79,7 +79,7 @@ class RDTclass:
         while True:            
             # Sliding window, send all packets within window size
             while (self.seqnum < (self.base + self.window_size)) and (self.seqnum < len(packet)):
-                debug_print("Sender MSG: Sending packet number " + str(self.seqnum) + " / " + str(len(packet) - 1))
+                debug_print("Sender MSG: Sending packet number " + str(self.seqnum))
                 # Create packets with header - this includes seqnum, data, and size
                 cur_packet = self.create_header(packet[self.seqnum], self.seqnum, len(packet))
 
@@ -95,7 +95,7 @@ class RDTclass:
                 # Timer handling for each packet in window size, including adjustment and creation
                 with self.ACK_pending_thread:
                     # Check if the sequence number is within the bounds of the ACK timer buffer
-                    if self.seqnum < (len(self.ACK_timer_buffer) - 1):
+                    if self.seqnum in range(len(self.ACK_timer_buffer) - 1):
                         # If yes, update the existing timer for the current sequence number
                         self.ACK_timer_buffer[self.seqnum] = threading.Timer(self.timeout_val, self.handle_timeout, (self.seqnum,))
                     else:
@@ -114,7 +114,7 @@ class RDTclass:
             with self.Base_thread:
                 if self.base == len(packet):
                     debug_print("Sender MSG: Send method completed!")
-                    time.sleep(0.5)
+                    sleep(0.25)
                     self.Break_out = True
                     break
 
@@ -126,8 +126,8 @@ class RDTclass:
         while True:
             # Check if send method has been completed
             if self.Break_out:
-                time.sleep(0.5)
-                return
+                sleep(0.25)
+                break
 
             # check for recv and split each packet
             packet, address = self.recv_sock.recvfrom(self.packet_size)
@@ -146,7 +146,8 @@ class RDTclass:
             with self.Base_thread:
                 while (SeqNum > self.base):
                     with self.ACK_pending_thread:
-                        debug_print("Sender MSG: Received ACK" + str(SeqNum) + "\n")  
+                        debug_print("Sender MSG: Received ACK" + str(SeqNum) + "\n")
+                        # If ACK is received, timer must be cancel at base
                         self.ACK_timer_buffer[self.base].cancel()
 
                     debug_print("Sender MSG: Shifting Base value")
@@ -220,12 +221,6 @@ class RDTclass:
         # Return the received data buffer
         return packet_data
 
-    # checking for the ACK state
-    def send_ACK(self, seqnum, total_count):
-        # Introduce simulated packet loss. In the event of packet loss, skip the ACK/NAK response process.
-        debug_print("Receiver MSG: Sending ACK " + str(seqnum) + "/" + str(total_count))
-        self.send_sock.sendto(self.create_header(self.ACK.to_bytes(1, 'big'), seqnum, total_count), (self.send_address, self.send_port))
-
  #----------------------------------------------------------------------------------------------------------------------------------------------------
  #
  # Supporting methods
@@ -264,8 +259,8 @@ class RDTclass:
 
     def create_header(self, packet, Cur_num, total):
         # Create SeqNum, total_size, and checksum to each package
-        SeqNum = Cur_num.to_bytes(4, 'big')
-        total_count = total.to_bytes(4, 'big')
+        SeqNum = Cur_num.to_bytes(4, byteorder='big') # Convert to byte
+        total_count = total.to_bytes(4, byteorder='big') # Convert to byte
         checksum = self.create_checksum(SeqNum + total_count + packet)  # create checksum (2 bytes)
         header_packet = SeqNum + total_count + checksum + packet
         return header_packet
