@@ -16,18 +16,13 @@ def Make_Packet(input_file):
         # return from function list with image chunks
         return packets
 
-# Set arguement for RDT2_2 class for server side, from instruction note (Phase 5.pdf):
-# 1. Option 1 - No loss/bit-errors
-# 2. Option 2 - ACK packet bit-error
-# 3. Option 3 - Data packet bit-error
-# 4. Option 4 - ACK packet loss
-# 5. Option 5 - Data packet loss
-client_side = RDTclass("127.0.0.1", "127.0.0.1", 12002, 12000, corruption_rate = 5, loss_rate = 5, option = 5, window_size = 10, timeout_val = 0.25)
+# Create a class for Go back In protocal with address and port number
+client_side = RDTclass("127.0.0.1", "127.0.0.1", 12002, 12000)
 
 # Make packet from file named "sample.bmp"
 packets = Make_Packet("sample.bmp")
 
-print("Client - RDT2-2")
+print("Client - Go-back-In")
 
 start_time = time.time() # find start time
 

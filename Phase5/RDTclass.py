@@ -1,49 +1,61 @@
- #----------------------------------------------------------------------------------------------------------------------------------------------------
- #
- # Network Design 4830 - Phase 5
- # Implement Go-Back-N protocol over an unreliable UDP channel
- #
- #----------------------------------------------------------------------------------------------------------------------------------------------------
-
+#----------------------------------------------------------------------------------------------------------------------------------------------------
+#
+# Network Design 4830 - Phase 5
+# Implement Go-Back-N protocol over an unreliable UDP channel
+#
+#----------------------------------------------------------------------------------------------------------------------------------------------------
+# Imports modules
 from socket import * # socket libary for server and client binding
 from random import * # corruption methods
 import threading
 import time
 
+# Set parameters for class from instruction note (Phase 5.pdf):
+# 1. Option 1 - No loss/bit-errors
+# 2. Option 2 - ACK packet bit-error
+# 3. Option 3 - Data packet bit-error
+# 4. Option 4 - ACK packet loss
+# 5. Option 5 - Data packet loss
+
+# Default values
+TIMEOUT = 0.03          # Timer value (seconds)
+ERROR_RATE_VAL = 20     # percentage for loss and corruption rate
+WINDOW_SIZE = 10       # size of window
+OPTION = 3              # options
+PRINT_OUTPUT = False     # print message
+
 # On / Off print statement, save time if off (#1)
-debug = True
 def debug_print(message):
-    if debug:
+    if PRINT_OUTPUT:
         print(message)
 
 class RDTclass:
-    def __init__(self, send_address, recv_address, send_port, recv_port, corruption_rate, loss_rate, option = 1, window_size = 10, timeout_val = 0.03):
+    def __init__(self, send_address, recv_address, send_port, recv_port):
         # Global Values
         self.ACK = 0x00 # 8-bit ACK value, hexadecimal
         self.packet_size = 1024 # packet size of 1024 byte as default
-        self.Break_out = False
+        self.Break_out = False # Break out flag
 
         # Initialize the connection and set parameters for rate, option, and timeout
         self.send_address, self.recv_address = send_address, recv_address
         self.send_port, self.recv_port = send_port, recv_port
-        self.corruption_rate, self.loss_rate, self.option = corruption_rate, loss_rate, option
-        self.timeout_val = timeout_val
+        self.error_rate, self.option = ERROR_RATE_VAL, OPTION
+        self.timeout_val = TIMEOUT
 
         # Go Back In parameters
         self.base = 0 # base value
-        self.window_size = window_size # sliding window size
+        self.window_size = WINDOW_SIZE # sliding window size
         self.seqnum = 0 # current seq number
 
-        # This list is used to keep track of timer objects associated with each packet's acknowledgment. 
-        # Each element in this list corresponds to a packet's sequence number, and the timer associated with that sequence number. 
+        # This is used to keep track of each packets timer ACKs
         self.ACK_timer_buffer = []
 
-        # This list is used to keep track of the sequence numbers of packets that are waiting for acknowledgment. 
-        # It is essentially a buffer containing the sequence numbers of the packets that have been sent and are awaiting acknowledgment. 
+        # This is used to keep track of the seqnum of packets that are waiting for ACKs. 
+        # It's basically a buffer containing the seqnum of the packets that have been sent and are awaiting ACKs. 
         self.ACK_pending_buffer = list(range(self.window_size))
 
         # Threads are use to synchronize access to shared resources amoung different threads
-        # Base thread to handle self.base values, Send thread to handle self.send_sock, ACK thread to handle ACK operation
+        # Base thread to handle self.base values, Send thread to handle self.send_sock, ACK thread to handle ACK operations
         self.thread_locks = [threading.Lock() for i in range(3)] # three threads declare
         self.Base_thread, self.Send_thread, self.ACK_pending_thread = self.thread_locks # set thread locks
 
@@ -134,21 +146,21 @@ class RDTclass:
             with self.Base_thread:
                 while (SeqNum > self.base):
                     with self.ACK_pending_thread:
-                        debug_print("Sender MSG: ACK" + str(SeqNum) + " has been received")  
+                        debug_print("Sender MSG: Received ACK" + str(SeqNum) + "\n")  
                         self.ACK_timer_buffer[self.base].cancel()
 
-                    debug_print("Sender MSG: Shifting Base!\n")
+                    debug_print("Sender MSG: Shifting Base value")
                     self.base += 1
 
             # Exit conditions - if size is over total data
             if (self.base >= total_data) or (self.Break_out):
-                debug_print("Sender MSG: recieve ACK method completed!")
+                debug_print("Sender MSG: Recieve ACK method completed")
                 break
 
     # this method is initialized to obtain the time-out value
     def handle_timeout(self, seqnum):
         debug_print("Sender MSG: ACK" + str(seqnum) + " has timed out")
-        debug_print("Sender MSG: Resending at base number = " + str(self.base))
+        debug_print("Sender MSG: Resending Packet at base number = " + str(self.base))
 
         # Cancel timers for the remaining packets in the window
         with self.ACK_pending_thread:
@@ -194,15 +206,16 @@ class RDTclass:
 
             # If the header matches the base, buffer the data and increment the base
             if SeqNum == self.base:
-                debug_print("Receiver MSG: Writing packet number to output = " + str(SeqNum) + "\n")
+                debug_print("Receiver MSG: Writing packet " + str(SeqNum) + " to output\n")
                 packet_data.append(data) # write to packet_data
                 self.base += 1
 
             # Send an acknowledgment for the received packet
-            self.send_ACK(self.base, total_packets)
+            debug_print("Receiver MSG: Sending ACK " + str(self.base))
+            self.send_sock.sendto(self.create_header(self.ACK.to_bytes(1, 'big'), self.base, total_packets), (self.send_address, self.send_port))
 
         # Print a message for completion
-        debug_print("Receiver MSG: Receive method completed...")
+        debug_print("Receiver MSG: Received all packets")
 
         # Return the received data buffer
         return packet_data
@@ -222,7 +235,7 @@ class RDTclass:
     # Option 2 - ACK packet bit-error (#4)
     def ACKbiterror(self, packet):
         checksum_invalid = not self.test_checksum(packet)
-        is_corrupted = (self.corruption_rate >= randrange(1, 101)) # randomize corrupt chance
+        is_corrupted = (self.error_rate >= randrange(1, 101)) # randomize corrupt chance
         option_configured = (self.option == 2) # option 2 must be selected
         invalid_option = not (self.option == 1)
         bit_errors_simulated = option_configured and invalid_option and is_corrupted
@@ -231,7 +244,7 @@ class RDTclass:
     # Option 3 - Data packet bit-error
     def Databiterror(self, packet): 
         checksum_valid = self.test_checksum(packet)
-        is_corrupted = (self.corruption_rate >= randrange(1, 101)) # randomize corrupt chance
+        is_corrupted = (self.error_rate >= randrange(1, 101)) # randomize corrupt chance
         option_configured = (self.option == 3) # option 3 must be selected
         secondary_option = (self.option == 1) # return True right away
         bit_errors_not_simulated = not (is_corrupted and option_configured) or secondary_option
@@ -239,13 +252,13 @@ class RDTclass:
     
     # Option 4 - ACK packet loss
     def ACKpacketloss(self):
-        packet_loss_simulated = (self.loss_rate >= randrange(1, 101))
+        packet_loss_simulated = (self.error_rate >= randrange(1, 101))
         option_configured = (self.option == 4)
         return packet_loss_simulated and option_configured
 
     # Option 5 - Data packet loss
     def Datapacketloss(self):
-        packet_loss_simulated = (self.loss_rate >= randrange(1, 101))
+        packet_loss_simulated = (self.error_rate >= randrange(1, 101))
         option_configured = (self.option == 5)
         return packet_loss_simulated and option_configured
 
