@@ -18,10 +18,10 @@ import threading
 # 5. Option 5 - Data packet loss
 
 # Class values
-TIMEOUT = 0.1          # Timer value (seconds)
-ERROR_RATE_VAL = 5     # percentage for loss and corruption rate
-WINDOW_SIZE = 10       # size of window
-OPTION = 5             # options
+TIMEOUT = 0.25         # Timer value (seconds)
+ERROR_RATE_VAL = 20     # percentage for loss and corruption rate
+WINDOW_SIZE = 10      # size of window
+OPTION = 2             # options
 PRINT_OUTPUT = True    # print message
 
 # On / Off print statement, save time if off (#1)
@@ -39,7 +39,7 @@ class RDTclass:
 
         # Global Values
         self.ACK = 0x00 # 8-bit ACK value, hexadecimal
-        self.packet_size = 1024 # packet size of 1024 byte as defaul
+        self.packet_size = 1024 # packet size of 1024 byte as default
         self.header_size = 10 # size of header for each packet
         self.Break_out = False # Break out flag
 
@@ -83,8 +83,6 @@ class RDTclass:
                 # Send the packet to the receiving host.
                 if (self.Datapacketloss()):
                     debug_print("Sender MSG: Data packet loss!")
-                elif (self.ACKpacketloss()):
-                    debug_print("Sender MSG: ACK packet loss!")
                 else:
                     self.send_sock.sendto(cur_packet, (self.sender_address, self.sender_port))
                 # Timer handling for each packet in the window size
@@ -134,6 +132,11 @@ class RDTclass:
             SeqNum, total_data= int.from_bytes(SeqNum, byteorder = 'big'), int.from_bytes(packet_count, byteorder = 'big')
             checksum, data = int.from_bytes(checksum, byteorder = 'big'), int.from_bytes(data, byteorder = 'big')
             
+            # ACK bit error - if error then skip base shift
+            if not (self.ACKbiterror(packet)):
+                debug_print("Sender MSG: ACK packet loss!")
+                continue
+
             # Ensure thread isolation while looping 
             with self.Base_thread:
                 while (SeqNum > self.base):
@@ -207,9 +210,6 @@ class RDTclass:
             if not (self.Databiterror(packet)):
                 debug_print("Receiver MSG: Data packet bit-error - Checksum failed!")
                 continue
-            elif not (self.ACKbiterror(packet)):
-                debug_print("Receiver MSG: ACK packet bit-error - Checksum failed!")
-                continue
 
             # If the header matches the base, buffer the data and increment the base
             if SeqNum == self.base:
@@ -217,9 +217,12 @@ class RDTclass:
                 packet_data.append(data) # write to packet_data
                 self.base += 1
 
-            # Send an acknowledgment for the received packet
-            debug_print("Receiver MSG: Sending ACK " + str(self.base))
-            self.send_sock.sendto(self.create_header(self.ACK.to_bytes(1, byteorder = 'big'), self.base, packet_count), (self.sender_address, self.sender_port))
+            # Send an acknowledgment for the received packet if no loss occurs
+            if (self.ACKpacketloss()):
+                debug_print("Receiver MSG: ACK packet loss!")
+            else:
+                debug_print("Receiver MSG: Sending ACK " + str(self.base))
+                self.send_sock.sendto(self.create_header(self.ACK.to_bytes(1, byteorder = 'big'), self.base, packet_count), (self.sender_address, self.sender_port))
 
         # Print a message for completion
         debug_print("Receiver MSG: Received all packets")
